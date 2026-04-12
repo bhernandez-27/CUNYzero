@@ -1,4 +1,4 @@
-import ClassCard from "@/components/ ClassCard";
+import ClassCard from "@/components/ClassCard";
 
 async function getTopClasses() {
   const response = await fetch(`${process.env.MAIN_URL}/api/class/top`);
@@ -8,7 +8,6 @@ async function getTopClasses() {
 
 export default async function Home() {
   const classes = await getTopClasses();
-
   return (
     <div className="grid grid-cols-3 gap-4">
       {classes.map((c: any, i: number) => (

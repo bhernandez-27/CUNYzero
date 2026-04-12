@@ -1,6 +1,6 @@
 import PropTypes from 'prop-types';
 
-
+//card component for each top class
 function ClassCard(props){
     return (
     <div className="border-2 border-blue-500">
