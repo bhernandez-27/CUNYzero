@@ -15,6 +15,7 @@ export async function GET() {
         i.name AS professor_name,
         s.semester,
         s.year,
+        d.department_code,
         COALESCE(ROUND(AVG(r.stars), 2), 0) AS average_rating,
         COALESCE(ROUND(AVG(e.number_grade), 2), 0) AS average_gpa
       FROM "public".class c
@@ -23,8 +24,9 @@ export async function GET() {
       JOIN "public".semester s ON c.semester_id = s.id
       LEFT JOIN "public".review r ON c.id = r.class_id
       LEFT JOIN "public".enrollment e ON c.id = e.class_id AND e.number_grade IS NOT NULL
+      JOIN "public".department d ON co.department_id = d.id
       GROUP BY 
-        c.id, co.name, co.course_code, i.name, s.semester, s.year
+        c.id, co.name, co.course_code, i.name, s.semester, s.year, d.department_code
       ORDER BY 
         average_rating DESC, 
         average_gpa DESC
