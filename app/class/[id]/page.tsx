@@ -46,7 +46,7 @@ export default async function ClassDetailsPage({
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
       {/* Back Button */}
-      <Link href="/" className="text-blue-500 hover:underline">
+      <Link href="/dashboard" className="text-blue-600 hover:underline">
         &larr; Back to Dashboard
       </Link>
 
