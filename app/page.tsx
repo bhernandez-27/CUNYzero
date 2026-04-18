@@ -1,5 +1,5 @@
 import Link from "next/link";
-
+// Component that renders a star mark
 function StarMark(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
@@ -11,6 +11,7 @@ function StarMark(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+// HeroIllustration is a component that renders a hero illustration
 function HeroIllustration() {
   return (
     <div className="relative">
@@ -114,6 +115,7 @@ function HeroIllustration() {
   );
 }
 
+// Component that renders a dark feature illustration
 function DarkFeatureIllustration() {
   return (
     <div className="relative rounded-[26px] bg-[#0f0f0f] border border-white/10 p-6">
@@ -188,7 +190,7 @@ function AvatarRow() {
     </div>
   );
 }
-
+// Main component that renders the home page
 export default function HomePage() {
   return (
     <div>

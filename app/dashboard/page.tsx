@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 export default async function DashboardPage() {
+  // Fetch the top 3 classes
   try {
     const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
     const response = await fetch(`${baseUrl}/api/class/top`, {
@@ -12,7 +13,7 @@ export default async function DashboardPage() {
     }
 
     const classes = await response.json();
-
+    // Render the dashboard
     return (
       <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
         <div className="mx-auto max-w-[1200px] px-5 py-8">
@@ -29,7 +30,7 @@ export default async function DashboardPage() {
                     <div className="text-xs text-slate-500">Student portal</div>
                   </div>
                 </div>
-
+                {/* Navigation */}
                 <nav className="mt-6 space-y-1 text-sm">
                   {[
                     { label: "Dashboard", active: true },

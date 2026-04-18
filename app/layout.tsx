@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// The metadata for the page
 export const metadata: Metadata = {
   title: "College0",
   description: "AI-enabled online college program management system.",
