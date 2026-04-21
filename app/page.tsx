@@ -206,16 +206,16 @@ export default function HomePage() {
 
             <div className="mt-8 flex items-center gap-4">
               <Link
-                href="/dashboard"
+                href="/public"
                 className="inline-flex items-center justify-center rounded-xl bg-[#F07E62] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_22px_rgba(240,126,98,0.35)] hover:brightness-[0.97] active:brightness-[0.95] transition"
               >
                 Get Started →
               </Link>
               <Link
-                href="/dashboard"
+                href="/public"
                 className="text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition"
               >
-                Explore dashboard
+                Public dashboard
               </Link>
             </div>
           </div>
@@ -273,7 +273,7 @@ export default function HomePage() {
 
               <div className="mt-7">
                 <Link
-                  href="/dashboard"
+                  href="/public"
                   className="inline-flex items-center justify-center rounded-xl bg-[#F07E62] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_22px_rgba(240,126,98,0.25)] hover:brightness-[0.97] active:brightness-[0.95] transition"
                 >
                   Join Our Team →

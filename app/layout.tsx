@@ -41,7 +41,7 @@ export default function RootLayout({
         <footer id="contact" className="py-10 border-t border-black/5">
           <div className="mx-auto max-w-6xl px-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
             <div className="text-sm text-neutral-600">
-              <div className="font-semibold text-neutral-900">College0 / Galaxy</div>
+              <div className="font-semibold text-neutral-900">College0</div>
               <div className="mt-1">A single-window learning experience with AI support.</div>
             </div>
             <p className="text-sm text-neutral-600">
