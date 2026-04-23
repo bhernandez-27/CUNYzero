@@ -14,12 +14,12 @@ export default function SiteHeader() {
           <span className="inline-grid place-items-center h-7 w-7 rounded-full bg-neutral-900 text-white">
             ✦
           </span>
-          <span>Galaxy</span>
+          <span>College0</span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-neutral-700">
-          <Link href="/dashboard" className="hover:text-neutral-900 transition-colors">
-            Courses
+          <Link href="/public" className="hover:text-neutral-900 transition-colors">
+            Public dashboard
           </Link>
           <Link href="/dashboard" className="hover:text-neutral-900 transition-colors">
             Instructor
@@ -34,16 +34,16 @@ export default function SiteHeader() {
 
         <div className="flex items-center gap-3">
           <Link
-            href="/dashboard"
+            href="/public"
             className="hidden sm:inline-flex text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition"
           >
-            Dashboard
+            Explore
           </Link>
           <Link
-            href="/dashboard"
+            href="/auth"
             className="inline-flex items-center justify-center rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm hover:bg-white/80 transition"
           >
-            Join Now
+            Sign in
           </Link>
         </div>
       </div>
