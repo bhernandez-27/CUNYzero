@@ -40,10 +40,10 @@ export default function SiteHeader() {
             Explore
           </Link>
           <Link
-            href="/dashboard"
+            href="/auth"
             className="inline-flex items-center justify-center rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm hover:bg-white/80 transition"
           >
-            Join Now
+            Sign in
           </Link>
         </div>
       </div>
