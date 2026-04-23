@@ -1,26 +1,52 @@
 "use client";
 
+import { authErrorMessage } from "@/lib/auth/clientErrorMessage";
 import { useRouter } from "next/navigation";
 import { type SubmitEvent, useState } from "react";
 
 export default function SignInForm() {
   const router = useRouter();
   const [pending, setPending] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
+    setFormError(null);
     setPending(true);
     const form = e.currentTarget;
     void (async () => {
-      await new Promise((r) => setTimeout(r, 400));
-      form.reset();
-      setPending(false);
-      router.push("/dashboard");
+      const fd = new FormData(form);
+      const email = String(fd.get("email") ?? "").trim();
+      const password = String(fd.get("password") ?? "");
+      const remember = fd.get("remember") === "on";
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ email, password, remember }),
+        });
+        if (!res.ok) {
+          setFormError(await authErrorMessage(res));
+          return;
+        }
+        form.reset();
+        router.push("/dashboard");
+      } catch {
+        setFormError("Network error. Try again.");
+      } finally {
+        setPending(false);
+      }
     })();
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {formError ? (
+        <p className="text-sm font-medium text-red-600" role="alert">
+          {formError}
+        </p>
+      ) : null}
       <div>
         <label htmlFor="signin-email" className="block text-sm font-medium text-neutral-800">
           Email

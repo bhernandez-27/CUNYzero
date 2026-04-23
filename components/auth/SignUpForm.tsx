@@ -1,5 +1,6 @@
 "use client";
 
+import { authErrorMessage } from "@/lib/auth/clientErrorMessage";
 import { useRouter } from "next/navigation";
 import { type SubmitEvent, useState } from "react";
 
@@ -21,10 +22,27 @@ export default function SignUpForm() {
     }
     setPending(true);
     void (async () => {
-      await new Promise((r) => setTimeout(r, 500));
-      form.reset();
-      setPending(false);
-      router.push("/dashboard");
+      const name = String(data.get("name") ?? "").trim();
+      const email = String(data.get("email") ?? "").trim();
+      const role = String(data.get("role") ?? "student");
+      try {
+        const res = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ name, email, password, role }),
+        });
+        if (!res.ok) {
+          setError(await authErrorMessage(res));
+          return;
+        }
+        form.reset();
+        router.push("/dashboard");
+      } catch {
+        setError("Network error. Try again.");
+      } finally {
+        setPending(false);
+      }
     })();
   }
 
