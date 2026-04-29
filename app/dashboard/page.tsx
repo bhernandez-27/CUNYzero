@@ -1,4 +1,16 @@
 import Link from "next/link";
+import ChatPanel from "@/components/ai/ChatPanel";
+
+type ClassSummary = {
+  id: number;
+  course_name: string;
+  course_code: string;
+  professor_name: string | null;
+  semester: string;
+  year: number;
+  average_rating: number | string | null;
+  average_gpa: number | string | null;
+};
 
 export default async function DashboardPage() {
   // Fetch the top 3 classes
@@ -12,7 +24,7 @@ export default async function DashboardPage() {
       throw new Error(`Failed to fetch classes: ${response.statusText}`);
     }
 
-    const classes = await response.json();
+    const classes = (await response.json()) as ClassSummary[];
     // Render the dashboard
     return (
       <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
@@ -216,6 +228,10 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
+              <div className="mt-6 xl:hidden">
+                <ChatPanel role="student" />
+              </div>
+
               {/* Classes */}
               <div className="mt-6 rounded-2xl bg-white border border-black/5 shadow-sm p-6">
                 <div className="flex items-center justify-between gap-4">
@@ -231,7 +247,7 @@ export default async function DashboardPage() {
                   </div>
                 ) : (
                   <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {classes.slice(0, 3).map((c: any, i: number) => (
+                    {classes.slice(0, 3).map((c, i) => (
                       <Link
                         key={c.id}
                         href={`/class/${c.id}`}
@@ -289,7 +305,7 @@ export default async function DashboardPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(classes as any[]).slice(0, 5).map((c: any) => (
+                      {classes.slice(0, 5).map((c) => (
                         <tr key={c.id} className="text-slate-700">
                           <td className="py-3 pr-4">
                             <div className="font-semibold text-slate-900 truncate max-w-[220px]">
@@ -346,6 +362,10 @@ export default async function DashboardPage() {
                   >
                     Profile
                   </a>
+                </div>
+
+                <div className="mt-6">
+                  <ChatPanel role="student" />
                 </div>
 
                 <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-100 p-4">
@@ -411,15 +431,16 @@ export default async function DashboardPage() {
         </div>
       </div>
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Dashboard Page Error:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
 
     return (
       <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
         <div className="mx-auto max-w-[1200px] px-5 py-8">
           <div className="rounded-2xl bg-red-50 border border-red-200 p-7">
           <h3 className="text-red-900 font-semibold text-xl">Critical Error</h3>
-          <p className="mt-2 text-red-700">{error.message}</p>
+          <p className="mt-2 text-red-700">{message}</p>
           <p className="mt-4 text-sm text-red-700/80">
             Check your terminal for more details.
           </p>
