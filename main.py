@@ -4,9 +4,18 @@ from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy import create_engine, text
 from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker, Session
-from logic_engine import evaluate_student_status, process_review, check_overlap
+from logic_engine import process_review, check_overlap
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="College0 Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"], # Allows your Next.js app
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 #DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/college0" "postgresql://user:password@localhost:5432/college0"
 DATABASE_URL = "postgresql://teamI:passwordI@127.0.0.1:5432/mydb"
@@ -29,11 +38,6 @@ def get_db():
 @app.get("/")
 def home():
     return {"status": "College0 API is running"}
-
-@app.get("/test/gpa")
-def test_gpa(gpa: float):
-    status = evaluate_student_status(gpa, total_courses=0)
-    return {"input_gpa": gpa, "result": status}
 
 @app.post("/submit-review")
 def submit_review(review: ReviewCreate, db: Session = Depends(get_db)):
@@ -158,3 +162,29 @@ def get_student_standing(student_id: int, db: Session = Depends(get_db)):
         "standing": standing,
         "alerts": messages
     }
+
+class RegisterUser(BaseModel):
+    email: str
+    password: str
+    name: str = None 
+    full_name: str = None
+    account_type: str = "Student" 
+
+@app.post("/auth/register")
+def register_user(user: RegisterUser, db: Session = Depends(get_db)):
+    print(f"--- Incoming Registration ---")
+    print(f"Data: {user.dict()}") 
+    
+    return {
+        "status": "Success", 
+        "message": "Backend received data! No more 422 error."
+    }
+class LoginUser(BaseModel):
+    email: str
+    password: str
+
+@app.post("/auth/login")
+def login_user(user: LoginUser, db: Session = Depends(get_db)):
+    print(f"Login attempt for: {user.email}")
+    #allow any email/password for testing
+    return {"status": "Success", "token": "fake-jwt-token", "user": {"email": user.email}}

@@ -9,17 +9,6 @@ mock_student = {
     "completed_courses": 7
 }
 
-
-# GPA Calculator
-def evaluate_student_status(current_gpa, total_courses, failed_same_course_twice=False):
-    if current_gpa < 2.0 or failed_same_course_twice:
-        return "TERMINATED"
-    elif 2.0 <= current_gpa <= 2.25:
-        return "WARNING_MANDATORY_INTERVIEW"
-    elif current_gpa > 3.75:
-        return "HONOR_ROLL"
-    return "ACTIVE"
-
 # Taboo Filter 
 def process_review(text, taboo_list):
     words = text.split()
@@ -74,12 +63,7 @@ def parse_time_to_minutes(time_str):
     hours, minutes = map(int, time_str.split(':'))
     return hours * 60 + minutes
 
-#Interval Overlap Detection
-def is_overlapping(time1, time2):
-    start1, end1 = map(parse_time_to_minutes, time1)
-    start2, end2 = map(parse_time_to_minutes, time2)
-    
-    return start1 < end2 and end1 > start2
+
 
 # Suspension Logic
 def check_for_suspension(user_id, current_warning_count):
