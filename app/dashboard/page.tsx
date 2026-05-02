@@ -1,6 +1,6 @@
 import Link from "next/link";
 import ChatPanel from "@/components/ai/ChatPanel";
-import DashboardSidebar from "@/components/dashboard/DashboardSidebar";
+import DashboardShell from "@/components/dashboard/DashboardShell";
 
 type ClassSummary = {
   id: number;
@@ -29,15 +29,86 @@ export default async function DashboardPage() {
     // Render the dashboard
     return (
       <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
-        <div className="mx-auto max-w-[1200px] px-5 py-8">
-          <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] xl:grid-cols-[240px_1fr_320px] gap-6">
-            {/* Sidebar */}
-            <aside className="hidden lg:block">
-              <DashboardSidebar />
-            </aside>
+        <DashboardShell
+          right={
+            <div className="rounded-2xl bg-white border border-black/5 shadow-sm p-6">
+              <div className="flex flex-col items-center text-center">
+                <div className="h-16 w-16 rounded-full bg-linear-to-br from-[#FDE7DF] to-white border border-black/5" />
+                <div className="mt-3 text-sm font-semibold text-slate-900">Stelle Walton</div>
+                <div className="text-xs text-slate-500">Student</div>
+                <a
+                  href="#"
+                  className="mt-3 inline-flex items-center justify-center rounded-xl bg-neutral-900 px-4 py-2 text-xs font-semibold text-white hover:bg-neutral-800 transition"
+                >
+                  Profile
+                </a>
+              </div>
 
-            {/* Main */}
-            <main className="min-w-0">
+              <div className="mt-6">
+                <ChatPanel role="student" />
+              </div>
+
+              <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-100 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-slate-700">December 2022</div>
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <button className="h-7 w-7 rounded-lg bg-white border border-slate-200 hover:bg-slate-100">
+                      ‹
+                    </button>
+                    <button className="h-7 w-7 rounded-lg bg-white border border-slate-200 hover:bg-slate-100">
+                      ›
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-7 gap-1 text-[11px] text-slate-500">
+                  {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                    <div key={d} className="text-center py-1 font-semibold">
+                      {d}
+                    </div>
+                  ))}
+                  {Array.from({ length: 35 }).map((_, idx) => {
+                    const day = idx - 1;
+                    const isActive = day === 13;
+                    const inMonth = day >= 1 && day <= 31;
+                    return (
+                      <div
+                        key={idx}
+                        className={[
+                          "h-8 grid place-items-center rounded-lg",
+                          inMonth ? "text-slate-700" : "text-slate-300",
+                          isActive ? "bg-[#F07E62] text-white font-semibold" : "hover:bg-white",
+                        ].join(" ")}
+                      >
+                        {inMonth ? day : ""}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <div className="text-xs font-semibold text-slate-700">Reminders</div>
+                <div className="mt-3 space-y-3">
+                  {[
+                    { title: "Eng - Vocabulary test", time: "10 Dec 2022, Friday" },
+                    { title: "Eng - Essay", time: "12 Dec 2022, Friday" },
+                    { title: "Eng - Speaking Class", time: "18 Dec 2022, Friday" },
+                  ].map((r) => (
+                    <div key={r.title} className="flex items-start gap-3">
+                      <div className="mt-1 h-3 w-3 rounded-full bg-[#F07E62]" aria-hidden="true" />
+                      <div>
+                        <div className="text-xs font-semibold text-slate-900">{r.title}</div>
+                        <div className="text-[11px] text-slate-500">{r.time}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          }
+          main={
+            <>
               {/* Top bar */}
               <div className="rounded-2xl bg-white border border-black/5 shadow-sm px-5 py-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                 <div className="flex-1">
@@ -176,6 +247,7 @@ export default async function DashboardPage() {
                 </div>
               </div>
 
+              {/* AI panel for smaller breakpoints (avoid duplicating XL right rail) */}
               <div className="mt-6 xl:hidden">
                 <ChatPanel role="student" />
               </div>
@@ -198,7 +270,7 @@ export default async function DashboardPage() {
                     {classes.slice(0, 3).map((c, i) => (
                       <Link
                         key={c.id}
-                        href={`/class/${c.id}`}
+                        href={`/dashboard/class/${c.id}`}
                         className={[
                           "rounded-2xl p-5 text-white shadow-sm transition hover:-translate-y-0.5",
                           i === 0
@@ -295,88 +367,9 @@ export default async function DashboardPage() {
                   </table>
                 </div>
               </div>
-            </main>
-
-            {/* Right panel */}
-            <aside className="hidden xl:block">
-              <div className="rounded-2xl bg-white border border-black/5 shadow-sm p-6">
-                <div className="flex flex-col items-center text-center">
-                  <div className="h-16 w-16 rounded-full bg-linear-to-br from-[#FDE7DF] to-white border border-black/5" />
-                  <div className="mt-3 text-sm font-semibold text-slate-900">Stelle Walton</div>
-                  <div className="text-xs text-slate-500">Student</div>
-                  <a
-                    href="#"
-                    className="mt-3 inline-flex items-center justify-center rounded-xl bg-neutral-900 px-4 py-2 text-xs font-semibold text-white hover:bg-neutral-800 transition"
-                  >
-                    Profile
-                  </a>
-                </div>
-
-                <div className="mt-6">
-                  <ChatPanel role="student" />
-                </div>
-
-                <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-slate-700">December 2022</div>
-                    <div className="flex items-center gap-2 text-slate-400">
-                      <button className="h-7 w-7 rounded-lg bg-white border border-slate-200 hover:bg-slate-100">
-                        ‹
-                      </button>
-                      <button className="h-7 w-7 rounded-lg bg-white border border-slate-200 hover:bg-slate-100">
-                        ›
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-7 gap-1 text-[11px] text-slate-500">
-                    {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                      <div key={d} className="text-center py-1 font-semibold">
-                        {d}
-                      </div>
-                    ))}
-                    {Array.from({ length: 35 }).map((_, idx) => {
-                      const day = idx - 1;
-                      const isActive = day === 13;
-                      const inMonth = day >= 1 && day <= 31;
-                      return (
-                        <div
-                          key={idx}
-                          className={[
-                            "h-8 grid place-items-center rounded-lg",
-                            inMonth ? "text-slate-700" : "text-slate-300",
-                            isActive ? "bg-[#F07E62] text-white font-semibold" : "hover:bg-white",
-                          ].join(" ")}
-                        >
-                          {inMonth ? day : ""}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <div className="text-xs font-semibold text-slate-700">Reminders</div>
-                  <div className="mt-3 space-y-3">
-                    {[
-                      { title: "Eng - Vocabulary test", time: "10 Dec 2022, Friday" },
-                      { title: "Eng - Essay", time: "12 Dec 2022, Friday" },
-                      { title: "Eng - Speaking Class", time: "18 Dec 2022, Friday" },
-                    ].map((r) => (
-                      <div key={r.title} className="flex items-start gap-3">
-                        <div className="mt-1 h-3 w-3 rounded-full bg-[#F07E62]" aria-hidden="true" />
-                        <div>
-                          <div className="text-xs font-semibold text-slate-900">{r.title}</div>
-                          <div className="text-[11px] text-slate-500">{r.time}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </aside>
-          </div>
-        </div>
+            </>
+          }
+        />
       </div>
     );
   } catch (error: unknown) {
@@ -385,15 +378,17 @@ export default async function DashboardPage() {
 
     return (
       <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
-        <div className="mx-auto max-w-[1200px] px-5 py-8">
-          <div className="rounded-2xl bg-red-50 border border-red-200 p-7">
-          <h3 className="text-red-900 font-semibold text-xl">Critical Error</h3>
-          <p className="mt-2 text-red-700">{message}</p>
-          <p className="mt-4 text-sm text-red-700/80">
-            Check your terminal for more details.
-          </p>
-        </div>
-      </div>
+        <DashboardShell
+          main={
+            <div className="rounded-2xl bg-red-50 border border-red-200 p-7">
+              <h3 className="text-red-900 font-semibold text-xl">Critical Error</h3>
+              <p className="mt-2 text-red-700">{message}</p>
+              <p className="mt-4 text-sm text-red-700/80">
+                Check your terminal for more details.
+              </p>
+            </div>
+          }
+        />
       </div>
     );
   }
