@@ -12,6 +12,8 @@ export type SectionRow = {
   id: string;
   courseName: string;
   sectionId: string;
+  department: string;
+  credits: number;
   instructor: string;
   timeSlots: TimeSlot[];
   seatsAvailable: number;

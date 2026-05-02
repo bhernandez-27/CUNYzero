@@ -15,6 +15,7 @@ type CalendarEvent = {
   title: string;
   subtitle: string;
   status: RowStatus;
+  conflict: boolean;
 };
 
 export default function SchedulePreview(props: { rows: SectionRow[] }) {
@@ -31,7 +32,21 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
           title: r.sectionId,
           subtitle: r.courseName,
           status: r.status,
+          conflict: false,
         });
+      }
+    }
+    // mark conflicts (overlapping events on same day)
+    const byDay: Record<Day, CalendarEvent[]> = { Mon: [], Tue: [], Wed: [], Thu: [], Fri: [] };
+    for (const e of out) byDay[e.day].push(e);
+    for (const d of DAYS) {
+      const list = byDay[d].sort((a, b) => a.startMin - b.startMin);
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          if (list[j].startMin >= list[i].endMin) break;
+          list[i].conflict = true;
+          list[j].conflict = true;
+        }
       }
     }
     return out;
@@ -48,7 +63,8 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
     return by;
   }, [events]);
 
-  function eventTone(status: RowStatus) {
+  function eventTone(status: RowStatus, conflict: boolean) {
+    if (conflict) return "bg-red-50 border-red-200 text-red-900";
     if (status === "ENROLLED") return "bg-emerald-50 border-emerald-200 text-emerald-900";
     if (status === "WAITLISTED") return "bg-amber-50 border-amber-200 text-amber-900";
     if (status === "SELECTED") return "bg-slate-50 border-slate-200 text-slate-900";
@@ -60,7 +76,7 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
       <div className="px-5 py-4 border-b border-black/5">
         <div className="text-sm font-semibold text-slate-900">Schedule preview</div>
         <div className="mt-1 text-xs text-slate-500">
-          Shows your current selection (Selected/Enrolled/Waitlisted). Conflicts are blocked automatically.
+          Shows your current selection (Selected/Enrolled/Waitlisted). Conflicts are highlighted in red.
         </div>
       </div>
 
@@ -109,7 +125,7 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
                         className={[
                           "absolute left-2 right-2 rounded-xl border px-2 py-1.5 shadow-sm",
                           "text-[11px] leading-tight",
-                          eventTone(e.status),
+                          eventTone(e.status, e.conflict),
                         ].join(" ")}
                         style={{ top: `${top}%`, height: `${Math.max(7, height)}%` }}
                         title={`${e.title} · ${e.subtitle}`}
@@ -127,6 +143,10 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-red-600" aria-hidden="true" />
+                Conflict
+              </span>
               <span className="inline-flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-slate-500" aria-hidden="true" />
                 Selected

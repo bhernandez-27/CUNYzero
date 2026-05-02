@@ -35,6 +35,9 @@ export default function RegistrationTable(props: {
               <tr key={r.id} className="text-slate-700">
                 <td className="py-3 px-5">
                   <div className="font-semibold text-slate-900">{r.courseName}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {r.department} · {r.credits} credits
+                  </div>
                   {r.status !== "NOT_ENROLLED" ? (
                     <div className="mt-1 text-xs">
                       <StatusPill status={r.status} />
