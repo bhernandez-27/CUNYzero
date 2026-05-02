@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import DashboardSidebar from "@/components/dashboard/DashboardSidebar";
+import DashboardShell from "@/components/dashboard/DashboardShell";
 
 type Schedule = {
   day: string;
@@ -51,13 +51,9 @@ export default async function StudentClassPage(props: { params: Promise<{ id: st
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
-      <div className="w-full">
-        <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[280px_1fr]">
-          <aside className="hidden lg:block sticky top-0 h-[calc(100vh-4rem)]">
-            <DashboardSidebar />
-          </aside>
-
-          <main className="min-w-0 px-6 py-6">
+      <DashboardShell
+        main={
+          <>
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-lg font-semibold text-slate-900">{classData.course_name}</div>
@@ -167,9 +163,9 @@ export default async function StudentClassPage(props: { params: Promise<{ id: st
                 </Link>
               </div>
             </div>
-          </main>
-        </div>
-      </div>
+          </>
+        }
+      />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import DashboardSidebar from "@/components/dashboard/DashboardSidebar";
+import DashboardShell from "@/components/dashboard/DashboardShell";
 import ConfirmOnceModal from "@/components/dashboard/reviews/ConfirmOnceModal";
 import StarRating from "@/components/dashboard/reviews/StarRating";
 import ToastStack from "@/components/dashboard/registration/ToastStack";
@@ -11,37 +11,10 @@ import { uid } from "@/components/dashboard/registration/utils";
 import { getReviewContext, submitReview } from "@/lib/reviews/api";
 import type { ReviewContextResponse, SubmitReviewResult } from "@/lib/reviews/types";
 
-function useSidebarCollapsed() {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem("college0.sidebarCollapsed");
-      if (raw === "1") setSidebarCollapsed(true);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  function toggleSidebar() {
-    setSidebarCollapsed((v) => {
-      const next = !v;
-      try {
-        window.localStorage.setItem("college0.sidebarCollapsed", next ? "1" : "0");
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }
-
-  return { sidebarCollapsed, toggleSidebar };
-}
-
 export default function WriteReviewPage() {
   const params = useParams<{ id: string }>();
   const classId = Number(params?.id);
 
-  const { sidebarCollapsed, toggleSidebar } = useSidebarCollapsed();
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const [ctx, setCtx] = useState<ReviewContextResponse | null>(null);
@@ -145,18 +118,9 @@ export default function WriteReviewPage() {
         }}
       />
 
-      <div className="w-full">
-        <div
-          className={[
-            "grid min-h-[calc(100vh-4rem)]",
-            sidebarCollapsed ? "lg:grid-cols-[88px_1fr]" : "lg:grid-cols-[280px_1fr]",
-          ].join(" ")}
-        >
-          <aside className="hidden lg:block sticky top-0 h-[calc(100vh-4rem)]">
-            <DashboardSidebar collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
-          </aside>
-
-          <main className="min-w-0 px-6 py-6">
+      <DashboardShell
+        main={
+          <>
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-lg font-semibold text-slate-900">Write course review</div>
@@ -266,9 +230,9 @@ export default function WriteReviewPage() {
                 <div className="px-5 py-6 text-sm text-slate-600">No class context found.</div>
               ) : null}
             </div>
-          </main>
-        </div>
-      </div>
+          </>
+        }
+      />
     </div>
   );
 }

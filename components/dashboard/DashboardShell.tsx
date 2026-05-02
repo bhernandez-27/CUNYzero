@@ -5,6 +5,7 @@ import DashboardSidebar from "@/components/dashboard/DashboardSidebar";
 
 export default function DashboardShell(props: { main: ReactNode; right?: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const hasRight = Boolean(props.right);
 
   useEffect(() => {
     try {
@@ -40,7 +41,12 @@ export default function DashboardShell(props: { main: ReactNode; right?: ReactNo
         </aside>
 
         <div className="min-w-0 px-6 py-6">
-          <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 items-start">
+          <div
+            className={[
+              "grid grid-cols-1 gap-6 items-start",
+              hasRight ? "xl:grid-cols-[1fr_360px]" : "xl:grid-cols-1",
+            ].join(" ")}
+          >
             <div className="min-w-0">{props.main}</div>
             {props.right ? <div className="min-w-0 xl:sticky xl:top-6 space-y-6">{props.right}</div> : null}
           </div>
