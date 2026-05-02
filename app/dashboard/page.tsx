@@ -1,5 +1,6 @@
 import Link from "next/link";
 import ChatPanel from "@/components/ai/ChatPanel";
+import DashboardSidebar from "@/components/dashboard/DashboardSidebar";
 
 type ClassSummary = {
   id: number;
@@ -32,60 +33,7 @@ export default async function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] xl:grid-cols-[240px_1fr_320px] gap-6">
             {/* Sidebar */}
             <aside className="hidden lg:block">
-              <div className="rounded-2xl bg-white border border-black/5 shadow-sm p-5">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-neutral-900 text-white grid place-items-center font-semibold">
-                    L
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">Learnthru</div>
-                    <div className="text-xs text-slate-500">Student portal</div>
-                  </div>
-                </div>
-                {/* Navigation */}
-                <nav className="mt-6 space-y-1 text-sm">
-                  {[
-                    { label: "Dashboard", active: true },
-                    { label: "Classroom" },
-                    { label: "Live Lessons" },
-                    { label: "Recorded Lessons" },
-                    { label: "Video Library" },
-                  ].map((item) => (
-                    <a
-                      key={item.label}
-                      href="#"
-                      className={[
-                        "flex items-center gap-3 rounded-xl px-3 py-2 transition",
-                        item.active
-                          ? "bg-neutral-900 text-white"
-                          : "text-slate-700 hover:bg-slate-100",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "h-2.5 w-2.5 rounded-full",
-                          item.active ? "bg-white/90" : "bg-slate-300",
-                        ].join(" ")}
-                        aria-hidden="true"
-                      />
-                      {item.label}
-                    </a>
-                  ))}
-                </nav>
-
-                <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <div className="text-sm font-semibold text-slate-900">Need help?</div>
-                  <div className="mt-1 text-xs text-slate-600">
-                    Do you have any problem while using the system?
-                  </div>
-                  <a
-                    href="#"
-                    className="mt-3 inline-flex items-center justify-center rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800 transition"
-                  >
-                    Contact support
-                  </a>
-                </div>
-              </div>
+              <DashboardSidebar />
             </aside>
 
             {/* Main */}
