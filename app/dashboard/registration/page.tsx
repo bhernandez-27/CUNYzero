@@ -7,70 +7,19 @@ import ToastStack from "@/components/dashboard/registration/ToastStack";
 import SchedulePreview from "@/components/dashboard/registration/SchedulePreview";
 import RegistrationTable from "@/components/dashboard/registration/RegistrationTable";
 import SelectionsPanel from "@/components/dashboard/registration/SelectionsPanel";
-import { hasScheduleConflict, rowMeetsTimeWindow, toMinutes, uid } from "@/components/dashboard/registration/utils";
+import { findScheduleConflicts, hasScheduleConflict, rowMeetsTimeWindow, toMinutes, uid } from "@/components/dashboard/registration/utils";
+import type { RegistrationConfirmResponse, RegistrationSectionDTO } from "@/lib/registration/apiTypes";
 
 export default function RegistrationPage() {
-  const initialRows: SectionRow[] = useMemo(
-    () => [
-      {
-        id: "row_101",
-        courseName: "Intro to Computer Science",
-        sectionId: "CSCI-101-A",
-        department: "CSCI",
-        credits: 3,
-        instructor: "Prof. Nguyen",
-        timeSlots: [
-          { day: "Mon", start: "10:00", end: "11:15" },
-          { day: "Wed", start: "10:00", end: "11:15" },
-        ],
-        seatsAvailable: 6,
-        status: "NOT_ENROLLED",
-      },
-      {
-        id: "row_220",
-        courseName: "Discrete Mathematics",
-        sectionId: "MATH-220-B",
-        department: "MATH",
-        credits: 4,
-        instructor: "Prof. Patel",
-        timeSlots: [
-          { day: "Tue", start: "09:30", end: "10:45" },
-          { day: "Thu", start: "09:30", end: "10:45" },
-        ],
-        seatsAvailable: 0,
-        status: "NOT_ENROLLED",
-      },
-      {
-        id: "row_305",
-        courseName: "Writing Seminar",
-        sectionId: "ENGL-305-C",
-        department: "ENGL",
-        credits: 3,
-        instructor: "Prof. Rivera",
-        timeSlots: [{ day: "Mon", start: "10:30", end: "11:45" }],
-        seatsAvailable: 2,
-        status: "NOT_ENROLLED",
-      },
-      {
-        id: "row_410",
-        courseName: "Modern World History",
-        sectionId: "HIST-410-D",
-        department: "HIST",
-        credits: 3,
-        instructor: "Prof. Chen",
-        timeSlots: [{ day: "Fri", start: "13:00", end: "14:15" }],
-        seatsAvailable: 1,
-        status: "NOT_ENROLLED",
-      },
-    ],
-    [],
-  );
-
-  const [rows, setRows] = useState<SectionRow[]>(initialRows);
+  const [rows, setRows] = useState<SectionRow[]>([]);
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [conflictHighlight, setConflictHighlight] = useState<string[] | null>(null);
+  const [ghostRow, setGhostRow] = useState<SectionRow | null>(null);
 
   const [dept, setDept] = useState<string>("ALL");
   const [days, setDays] = useState<Record<"Mon" | "Tue" | "Wed" | "Thu" | "Fri", boolean>>({
@@ -90,6 +39,35 @@ export default function RegistrationPage() {
   const waitlistedRows = useMemo(() => rows.filter((r) => r.status === "WAITLISTED"), [rows]);
   const selectionCount = selectedRows.length + enrolledRows.length + waitlistedRows.length;
 
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setLoadError(null);
+    void (async () => {
+      try {
+        const res = await fetch("/api/registration/sections", { cache: "no-store" });
+        if (!res.ok) throw new Error("Failed to load sections");
+        const data = (await res.json()) as RegistrationSectionDTO[];
+        if (!alive) return;
+        setRows(
+          data.map((s) => ({
+            ...s,
+            status: s.initialStatus ?? "NOT_ENROLLED",
+          })),
+        );
+      } catch {
+        if (!alive) return;
+        setLoadError("Could not load registration sections.");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     const enabledDays = (Object.entries(days).filter(([, v]) => v).map(([k]) => k) as Array<
@@ -98,6 +76,8 @@ export default function RegistrationPage() {
     const earliestMin = earliest === "ANY" ? null : toMinutes(earliest);
     const latestMin = latest === "ANY" ? null : toMinutes(latest);
     const creditNum = credits === "ANY" ? null : Number(credits);
+
+    if (earliestMin != null && latestMin != null && earliestMin > latestMin) return [];
 
     return rows.filter((r) => {
       const hay = `${r.courseName} ${r.sectionId} ${r.instructor}`.toLowerCase();
@@ -118,6 +98,11 @@ export default function RegistrationPage() {
 
   const deptOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.department))).sort(), [rows]);
   const creditOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.credits))).sort((a, b) => a - b), [rows]);
+  const hasDayFilters = useMemo(() => Object.values(days).some(Boolean), [days]);
+  const timeWindowInvalid = useMemo(() => {
+    if (earliest === "ANY" || latest === "ANY") return false;
+    return toMinutes(earliest) > toMinutes(latest);
+  }, [earliest, latest]);
 
   const timeOptions = useMemo(() => {
     const mins = [];
@@ -166,11 +151,20 @@ export default function RegistrationPage() {
     // 7c: schedule conflict (check against everything already selected/enrolled/waitlisted)
     const current = rows.filter((r) => r.status !== "NOT_ENROLLED");
     if (hasScheduleConflict(target, current)) {
+      const conflicts = findScheduleConflicts(target, current);
+      const conflictIds = [target.sectionId, ...conflicts.map((c) => c.sectionId)];
+      const conflictNames = conflicts.map((c) => `${c.sectionId} (${c.courseName})`).join(", ");
       pushToast({
         kind: "error",
         title: "Schedule conflict",
-        message: "This section overlaps with one of your current selections.",
+        message: `${target.sectionId} conflicts with ${conflictNames}.`,
       });
+      setConflictHighlight(conflictIds);
+      setGhostRow({ ...target, status: "SELECTED" });
+      window.setTimeout(() => {
+        setConflictHighlight(null);
+        setGhostRow(null);
+      }, 4500);
       setBusyRowId(null);
       return;
     }
@@ -225,64 +219,59 @@ export default function RegistrationPage() {
   async function confirmRegistration() {
     if (confirming || busyRowId) return;
 
-    const pending = rows.filter((r) => r.status === "SELECTED");
-    const finalCount = pending.length + enrolledRows.length + waitlistedRows.length;
+    setConfirming(true);
+    pushToast({ kind: "info", title: "Confirming registration…", message: "Finalizing your selections." });
+    try {
+      const selectedSectionIds = rows.filter((r) => r.status === "SELECTED").map((r) => r.sectionId);
+      const currentSectionIds = rows
+        .filter((r) => r.status === "ENROLLED" || r.status === "WAITLISTED")
+        .map((r) => r.sectionId);
 
-    if (finalCount < 2) {
-      pushToast({
-        kind: "error",
-        title: "Select at least 2 courses",
-        message: "The system requires 2–4 total course selections.",
+      const res = await fetch("/api/registration/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedSectionIds, currentSectionIds }),
       });
-      return;
-    }
-    if (finalCount > 4) {
-      pushToast({
-        kind: "error",
-        title: "Too many courses selected",
-        message: "You can only register for up to 4 courses.",
-      });
-      return;
-    }
+      if (!res.ok) throw new Error("confirm failed");
+      const out = (await res.json()) as RegistrationConfirmResponse;
 
-    // Validate conflicts among pending selections vs existing schedule.
-    const existing = rows.filter((r) => r.status === "ENROLLED" || r.status === "WAITLISTED");
-    for (const p of pending) {
-      if (hasScheduleConflict(p, existing)) {
+      if (out.status === "BLOCKED") {
+        const conflict = out.errors.find((e) => e.code === "SCHEDULE_CONFLICT");
         pushToast({
           kind: "error",
-          title: "Schedule conflict",
-          message: `Resolve conflicts before confirming (conflict with ${p.sectionId}).`,
+          title: "Registration blocked",
+          message: conflict ? conflict.message : out.errors[0]?.message ?? "Please fix issues and try again.",
         });
         return;
       }
-      existing.push(p);
+
+      let enrolledN = 0;
+      let waitlistedN = 0;
+      setRows((prev) =>
+        prev.map((r) => {
+          if (r.status !== "SELECTED") return r;
+          if (out.enrolled.includes(r.sectionId)) {
+            enrolledN += 1;
+            return { ...r, status: "ENROLLED", seatsAvailable: Math.max(0, r.seatsAvailable - 1) };
+          }
+          if (out.waitlisted.includes(r.sectionId)) {
+            waitlistedN += 1;
+            return { ...r, status: "WAITLISTED" };
+          }
+          return r;
+        }),
+      );
+
+      pushToast({
+        kind: "success",
+        title: "Registration updated",
+        message: `ENROLLED: ${enrolledN} · WAITLISTED: ${waitlistedN}`,
+      });
+    } catch {
+      pushToast({ kind: "error", title: "Confirm failed", message: "Try again." });
+    } finally {
+      setConfirming(false);
     }
-
-    setConfirming(true);
-    pushToast({ kind: "info", title: "Confirming registration…", message: "Finalizing your selections." });
-    await new Promise((r) => window.setTimeout(r, 900));
-
-    let enrolled = 0;
-    let waitlisted = 0;
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.status !== "SELECTED") return r;
-        if (r.seatsAvailable > 0) {
-          enrolled += 1;
-          return { ...r, status: "ENROLLED", seatsAvailable: Math.max(0, r.seatsAvailable - 1) };
-        }
-        waitlisted += 1;
-        return { ...r, status: "WAITLISTED" };
-      }),
-    );
-
-    pushToast({
-      kind: "success",
-      title: "Registration updated",
-      message: `ENROLLED: ${enrolled} · WAITLISTED: ${waitlisted}`,
-    });
-    setConfirming(false);
   }
 
   return (
@@ -385,6 +374,15 @@ export default function RegistrationPage() {
                           </button>
                         );
                       })}
+                      {hasDayFilters ? (
+                        <button
+                          type="button"
+                          onClick={() => setDays({ Mon: false, Tue: false, Wed: false, Thu: false, Fri: false })}
+                          className="h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+                        >
+                          Clear days
+                        </button>
+                      ) : null}
                     </div>
                   </div>
 
@@ -420,6 +418,14 @@ export default function RegistrationPage() {
                       </select>
                     </div>
                   </div>
+
+                  {timeWindowInvalid ? (
+                    <div className="lg:col-span-2">
+                      <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">
+                        Earliest start must be earlier than (or equal to) latest end.
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="grid grid-cols-2 gap-3 items-end">
                     <div>
@@ -471,16 +477,29 @@ export default function RegistrationPage() {
                 </div>
               </div>
 
-                <RegistrationTable
-                  rows={filteredRows}
-                  busyRowId={busyRowId}
-                  confirming={confirming}
-                  onAction={(kind, sectionId) => {
-                    if (kind === "register") void simulateSelect(sectionId);
-                    else if (kind === "remove") removeSelection(sectionId);
-                    else dropEnrollment(sectionId);
-                  }}
-                />
+                {loading ? (
+                  <div className="px-5 py-6 text-sm text-slate-600">Loading sections…</div>
+                ) : loadError ? (
+                  <div className="px-5 py-6">
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{loadError}</div>
+                  </div>
+                ) : filteredRows.length === 0 ? (
+                  <div className="px-5 py-10 text-center">
+                    <div className="text-sm font-semibold text-slate-900">No results</div>
+                    <div className="mt-1 text-sm text-slate-600">Try clearing filters or adjusting your search.</div>
+                  </div>
+                ) : (
+                  <RegistrationTable
+                    rows={filteredRows}
+                    busyRowId={busyRowId}
+                    confirming={confirming}
+                    onAction={(kind, sectionId) => {
+                      if (kind === "register") void simulateSelect(sectionId);
+                      else if (kind === "remove") removeSelection(sectionId);
+                      else dropEnrollment(sectionId);
+                    }}
+                  />
+                )}
 
                 <SelectionsPanel rows={rows} onRemove={removeSelection} onDrop={dropEnrollment} />
 
@@ -490,7 +509,7 @@ export default function RegistrationPage() {
               </div>
 
               <div className="xl:sticky xl:top-24 h-full">
-                <SchedulePreview rows={rows} />
+                <SchedulePreview rows={rows} highlightSectionIds={conflictHighlight ?? undefined} ghostRow={ghostRow} />
               </div>
             </div>
           </>

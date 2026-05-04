@@ -36,6 +36,10 @@ export function hasScheduleConflict(target: SectionRow, against: SectionRow[]): 
   return against.some((c) => c.timeSlots.some((a) => target.timeSlots.some((b) => overlaps(a, b))));
 }
 
+export function findScheduleConflicts(target: SectionRow, against: SectionRow[]): SectionRow[] {
+  return against.filter((c) => c.timeSlots.some((a) => target.timeSlots.some((b) => overlaps(a, b))));
+}
+
 export function rowMinStart(row: SectionRow): number {
   if (!row.timeSlots.length) return Number.POSITIVE_INFINITY;
   return Math.min(...row.timeSlots.map((s) => toMinutes(s.start)));

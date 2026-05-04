@@ -9,6 +9,7 @@ const DAYS: Day[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 type CalendarEvent = {
   key: string;
+  sectionId: string;
   day: Day;
   startMin: number;
   endMin: number;
@@ -16,16 +17,19 @@ type CalendarEvent = {
   subtitle: string;
   status: RowStatus;
   conflict: boolean;
+  highlight: boolean;
 };
 
-export default function SchedulePreview(props: { rows: SectionRow[] }) {
+export default function SchedulePreview(props: { rows: SectionRow[]; highlightSectionIds?: string[]; ghostRow?: SectionRow | null }) {
   const events = useMemo<CalendarEvent[]>(() => {
     const active = props.rows.filter((r) => r.status !== "NOT_ENROLLED");
+    const highlight = new Set(props.highlightSectionIds ?? []);
     const out: CalendarEvent[] = [];
     for (const r of active) {
       for (const slot of r.timeSlots) {
         out.push({
           key: `${r.sectionId}_${slot.day}_${slot.start}_${slot.end}`,
+          sectionId: r.sectionId,
           day: slot.day,
           startMin: toMinutes(slot.start),
           endMin: toMinutes(slot.end),
@@ -33,6 +37,24 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
           subtitle: r.courseName,
           status: r.status,
           conflict: false,
+          highlight: highlight.has(r.sectionId),
+        });
+      }
+    }
+    if (props.ghostRow) {
+      const r = props.ghostRow;
+      for (const slot of r.timeSlots) {
+        out.push({
+          key: `ghost_${r.sectionId}_${slot.day}_${slot.start}_${slot.end}`,
+          sectionId: r.sectionId,
+          day: slot.day,
+          startMin: toMinutes(slot.start),
+          endMin: toMinutes(slot.end),
+          title: r.sectionId,
+          subtitle: r.courseName,
+          status: r.status,
+          conflict: false,
+          highlight: true,
         });
       }
     }
@@ -50,7 +72,7 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
       }
     }
     return out;
-  }, [props.rows]);
+  }, [props.rows, props.highlightSectionIds, props.ghostRow]);
 
   const minTime = 8 * 60;
   const maxTime = 18 * 60;
@@ -63,8 +85,8 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
     return by;
   }, [events]);
 
-  function eventTone(status: RowStatus, conflict: boolean) {
-    if (conflict) return "bg-red-50 border-red-200 text-red-900";
+  function eventTone(status: RowStatus, conflict: boolean, highlight: boolean) {
+    if (conflict) return highlight ? "bg-red-50 border-red-400 text-red-900" : "bg-red-50 border-red-200 text-red-900";
     if (status === "ENROLLED") return "bg-emerald-50 border-emerald-200 text-emerald-900";
     if (status === "WAITLISTED") return "bg-amber-50 border-amber-200 text-amber-900";
     if (status === "SELECTED") return "bg-slate-50 border-slate-200 text-slate-900";
@@ -125,7 +147,8 @@ export default function SchedulePreview(props: { rows: SectionRow[] }) {
                         className={[
                           "absolute left-2 right-2 rounded-xl border px-2 py-1.5 shadow-sm",
                           "text-[11px] leading-tight",
-                          eventTone(e.status, e.conflict),
+                          eventTone(e.status, e.conflict, e.highlight),
+                          e.highlight ? "ring-2 ring-[#F07E62]/35" : "",
                         ].join(" ")}
                         style={{ top: `${top}%`, height: `${Math.max(7, height)}%` }}
                         title={`${e.title} · ${e.subtitle}`}
