@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, type FormEvent } from "react";
 
-type ChatRole = "student" | "instructor";
+type ChatRole = "student" | "instructor" | "visitor";
 
 type ChatMsg = {
   id: string;
@@ -16,13 +16,26 @@ function uid() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeRole(r: ChatRole | undefined): ChatRole {
+  if (r === "instructor") return "instructor";
+  if (r === "visitor") return "visitor";
+  return "student";
+}
+
+function welcomeForRole(role: ChatRole): string {
+  if (role === "visitor") {
+    return "You’re in visitor mode: I can share general information about College0 (programs, how to apply, semester lifecycle in broad terms). I can’t access personal schedules, grades, rosters, or accounts — ask those after you sign in, or contact the Registrar. If I rely on general AI rather than local college sources, I’ll note that the answer may be inaccurate.";
+  }
+  return "Ask me anything about College0. If I can’t find it in local data yet, I’ll answer generally and label it as potentially inaccurate.";
+}
+
 export default function ChatPanel(props: { role?: ChatRole }) {
-  const role: ChatRole = props.role === "instructor" ? "instructor" : "student";
+  const role = normalizeRole(props.role);
   const [messages, setMessages] = useState<ChatMsg[]>(() => [
     {
       id: uid(),
       from: "assistant",
-      text: "Ask me anything about College0. If I can’t find it in local data yet, I’ll answer generally and label it as potentially inaccurate.",
+      text: welcomeForRole(role),
       groundedInVectorDb: true,
       usedLlmFallback: false,
     },
@@ -94,9 +107,13 @@ export default function ChatPanel(props: { role?: ChatRole }) {
       <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-slate-900">AI Q&amp;A</div>
-          <div className="text-[11px] text-slate-500">Vector DB first → Gemini fallback (for now).</div>
+          <div className="text-[11px] text-slate-500">
+            {role === "visitor"
+              ? "Visitor scope: general college info only."
+              : "Vector DB first → Gemini fallback (for now)."}
+          </div>
         </div>
-        <span className="text-[11px] font-semibold rounded-full bg-slate-100 px-2.5 py-1 text-slate-700">
+        <span className="text-[11px] font-semibold rounded-full bg-slate-100 px-2.5 py-1 text-slate-700 capitalize">
           {role}
         </span>
       </div>

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-type ChatRole = "student" | "instructor";
+type ChatRole = "student" | "instructor" | "visitor";
 
 type GeminiPart = { text?: string };
 type GeminiContent = { parts?: GeminiPart[] };
@@ -50,15 +50,39 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "validation_error", message: "message must be a non-empty string." }, { status: 400 });
   }
 
-  // Normalize role and build the prompt for the model.
-  const roleStr: ChatRole = role === "instructor" ? "instructor" : "student";
+  // Normalize role and build the prompt for the model (SRS UC-12 role-based filtering).
+  const roleStr: ChatRole =
+    role === "instructor" ? "instructor" : role === "visitor" ? "visitor" : "student";
+
+  const visitorRules =
+    roleStr === "visitor"
+      ? [
+          `Critical visitor constraints:`,
+          `- Answer ONLY general information about College0: mission-style overview, how to apply as student/instructor,`,
+          `  what registration and semesters mean at a high level, and where to find the public dashboard.`,
+          `- Do NOT invent or claim specific private facts (no names, GPAs, schedules, grades, rosters, complaints, warnings).`,
+          `- If the user asks for personal or otherwise non-public data, refuse briefly and suggest signing in with the appropriate role`,
+          `  or contacting the Registrar.`,
+          `- Keep responses concise and neutral.`,
+          ``,
+        ]
+      : [];
+
   const prompt = [
     `You are College0's AI assistant.`,
     `User role: ${roleStr}.`,
-    `If you are unsure or missing College0-specific facts, say so briefly and ask a clarifying question.`,
+    ...visitorRules,
+    roleStr === "student"
+      ? `Students may ask about their enrolled courses when such context is provided in this chat in the future; for now do not invent enrollment details.`
+      : roleStr === "instructor"
+        ? `Instructors may ask about students in their classes when roster context is provided in the future; for now do not invent roster details.`
+        : ``,
+    `If you are unsure or missing College0-specific facts, say so briefly.`,
     "",
     message.trim(),
-  ].join("\n");
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 
   // Call Gemini generateContent.
   const model = getGeminiModel();

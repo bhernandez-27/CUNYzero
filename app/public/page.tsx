@@ -64,6 +64,40 @@ export default async function PublicDashboardPage() {
         </p>
       </header>
 
+      <section className="mt-10 rounded-[28px] bg-white border border-black/5 shadow-sm overflow-hidden" aria-label="Program overview">
+        <div className="px-6 py-8 sm:px-8 sm:py-10">
+          <h2 className="text-lg font-semibold text-neutral-900">Program at a glance</h2>
+          <p className="mt-3 text-sm text-neutral-600 leading-relaxed max-w-3xl">
+            College0 mirrors a full academic term: the Registrar runs four phases (set-up, registration, instruction,
+            grading). Students and instructors sign in for day-to-day work; visitors stay here on the public dashboard
+            for rankings and exploration — or start an application without an account.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href="/apply/student"
+              className="inline-flex items-center justify-center rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 transition"
+            >
+              Apply as Student
+            </Link>
+            <Link
+              href="/apply/instructor"
+              className="inline-flex items-center justify-center rounded-xl border border-black/10 bg-[#F7F5F1]/50 px-4 py-2.5 text-sm font-semibold text-neutral-900 hover:bg-[#F7F5F1] transition"
+            >
+              Apply as Instructor
+            </Link>
+            <Link
+              href="/visitor-ai"
+              className="inline-flex items-center justify-center rounded-xl border border-black/10 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 transition"
+            >
+              Visitor AI Q&A
+            </Link>
+            <Link href="/" className="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition">
+              Full program intro →
+            </Link>
+          </div>
+        </div>
+      </section>
+
       <section className="mt-12" aria-labelledby="top-rated-heading">
         <h2 id="top-rated-heading" className="text-lg font-semibold text-neutral-900">
           Top-rated classes

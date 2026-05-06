@@ -200,28 +200,103 @@ export default function HomePage() {
             <h1 className="text-[44px] leading-[1.05] sm:text-[54px] font-semibold tracking-tight text-neutral-900">
               Your ultimate destination for limitless learning
             </h1>
-            <p className="mt-4 text-neutral-600 max-w-xl">
-              The only authoring platform designed to unlock learner potential and streamline production.
+            <p className="mt-4 text-neutral-600 max-w-xl leading-relaxed">
+              <span className="font-semibold text-neutral-800">College0</span> is an AI-enabled academic management
+              simulation: applications, registration across four semester phases, grading, reviews, and guided support —
+              all in one calm, single-window experience.
             </p>
 
-            <div className="mt-8 flex items-center gap-4">
+            <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/public"
                 className="inline-flex items-center justify-center rounded-xl bg-[#F07E62] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_22px_rgba(240,126,98,0.35)] hover:brightness-[0.97] active:brightness-[0.95] transition"
               >
-                Get Started →
+                Public dashboard →
               </Link>
               <Link
-                href="/public"
-                className="text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition"
+                href="/apply"
+                className="inline-flex items-center justify-center rounded-xl border border-black/10 bg-white px-5 py-3 text-sm font-semibold text-neutral-900 shadow-sm hover:bg-white/80 transition"
               >
-                Public dashboard
+                Apply
+              </Link>
+              <Link href="/visitor-ai" className="text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition">
+                Visitor AI
               </Link>
             </div>
           </div>
 
           <HeroIllustration />
         </div>
+
+        <section
+          id="program"
+          className="mt-20 scroll-mt-24 rounded-[32px] bg-white border border-black/5 shadow-[0_18px_45px_rgba(0,0,0,0.06)] overflow-hidden"
+          aria-labelledby="program-intro-heading"
+        >
+          <div className="px-8 py-10 sm:px-10 sm:py-12">
+            <p className="text-sm font-medium text-[#F07E62]">Program introduction</p>
+            <h2 id="program-intro-heading" className="mt-2 text-3xl sm:text-4xl font-semibold tracking-tight text-neutral-900">
+              Built for the whole academic lifecycle
+            </h2>
+            <p className="mt-4 max-w-3xl text-neutral-600 leading-relaxed">
+              College0 supports visitors exploring the program, students moving from application to graduation,
+              instructors managing sections and grading, and registrars overseeing semesters, catalog setup, and policy.
+              Below is how the platform stays coherent — whether you are browsing or enrolled.
+            </p>
+
+            <div className="mt-10 grid gap-6 md:grid-cols-3">
+              <div className="rounded-2xl bg-[#F7F5F1]/80 border border-black/5 p-6">
+                <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Lifecycle</div>
+                <h3 className="mt-2 text-lg font-semibold text-neutral-900">From application to graduation</h3>
+                <p className="mt-3 text-sm text-neutral-600 leading-relaxed">
+                  Visitors may apply as students or instructors. Matriculated students register for 2–4 courses each term,
+                  join waitlists when sections fill, submit anonymized course reviews, file complaints when needed, and
+                  apply for graduation after completing requirements.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-[#F7F5F1]/80 border border-black/5 p-6">
+                <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Semesters</div>
+                <h3 className="mt-2 text-lg font-semibold text-neutral-900">Four controlled periods</h3>
+                <p className="mt-3 text-sm text-neutral-600 leading-relaxed">
+                  The Registrar advances the term through Class Set-Up, Course Registration, Class Running, and Grading.
+                  Each phase unlocks the right actions — so registration opens only when it should, and grading closes the loop with GPA and standing updates.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-[#F7F5F1]/80 border border-black/5 p-6">
+                <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">AI</div>
+                <h3 className="mt-2 text-lg font-semibold text-neutral-900">Grounded answers and advising</h3>
+                <p className="mt-3 text-sm text-neutral-600 leading-relaxed">
+                  AI Q&A prefers college-specific context from a local knowledge base, then falls back to a general model with a clear accuracy disclaimer when needed. Visitors get{" "}
+                  <Link href="/visitor-ai" className="font-medium text-neutral-800 underline-offset-4 hover:underline">
+                    general information only
+                  </Link>
+                  ; signed-in students and instructors receive appropriately scoped responses.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-10 flex flex-wrap gap-3">
+              <Link
+                href="/apply/student"
+                className="inline-flex items-center justify-center rounded-xl bg-neutral-900 px-5 py-3 text-sm font-semibold text-white hover:bg-neutral-800 transition"
+              >
+                Apply as Student
+              </Link>
+              <Link
+                href="/apply/instructor"
+                className="inline-flex items-center justify-center rounded-xl border border-black/15 bg-white px-5 py-3 text-sm font-semibold text-neutral-900 hover:bg-neutral-50 transition"
+              >
+                Apply as Instructor
+              </Link>
+              <Link
+                href="/public"
+                className="inline-flex items-center justify-center rounded-xl border border-transparent px-5 py-3 text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition"
+              >
+                View public dashboard →
+              </Link>
+            </div>
+          </div>
+        </section>
 
         <div className="mt-12 grid grid-cols-1 md:grid-cols-4 gap-6 items-stretch">
           <div className="rounded-2xl bg-white/75 border border-black/5 p-5 flex items-center gap-4">
@@ -271,12 +346,18 @@ export default function HomePage() {
                 learning journey for every educator.
               </p>
 
-              <div className="mt-7">
+              <div className="mt-7 flex flex-wrap gap-3">
                 <Link
-                  href="/public"
+                  href="/apply/instructor"
                   className="inline-flex items-center justify-center rounded-xl bg-[#F07E62] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_22px_rgba(240,126,98,0.25)] hover:brightness-[0.97] active:brightness-[0.95] transition"
                 >
-                  Join Our Team →
+                  Apply as Instructor →
+                </Link>
+                <Link
+                  href="/apply/student"
+                  className="inline-flex items-center justify-center rounded-xl border border-white/20 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10 transition"
+                >
+                  Apply as Student
                 </Link>
               </div>
             </div>
