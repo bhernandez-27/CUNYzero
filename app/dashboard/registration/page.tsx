@@ -267,17 +267,16 @@ export default function RegistrationPage() {
         return;
       }
 
-      let enrolledN = 0;
-      let waitlistedN = 0;
+      const enrolledN = out.enrolled.length;
+      const waitlistedN = out.waitlisted.length;
+
       setRows((prev) =>
         prev.map((r) => {
           if (r.status !== "SELECTED") return r;
           if (out.enrolled.includes(r.sectionId)) {
-            enrolledN += 1;
             return { ...r, status: "ENROLLED", seatsAvailable: Math.max(0, r.seatsAvailable - 1) };
           }
           if (out.waitlisted.includes(r.sectionId)) {
-            waitlistedN += 1;
             return { ...r, status: "WAITLISTED" };
           }
           return r;

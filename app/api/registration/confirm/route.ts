@@ -35,9 +35,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const { selected_section_ids, current_section_ids } = body as Partial<RegistrationConfirmRequest>;
-  const selected = Array.isArray(selected_section_ids) ? selected_section_ids : [];
-  const current = Array.isArray(current_section_ids) ? current_section_ids : [];
+  // Accept both camelCase (internal Next.js calls) and snake_case (direct Python-style calls).
+  const b = body as Record<string, unknown>;
+  const selected: string[] = Array.isArray(b.selected_section_ids)
+    ? (b.selected_section_ids as string[])
+    : Array.isArray(b.selectedSectionIds)
+      ? (b.selectedSectionIds as string[])
+      : [];
+  const current: string[] = Array.isArray(b.current_section_ids)
+    ? (b.current_section_ids as string[])
+    : Array.isArray(b.currentSectionIds)
+      ? (b.currentSectionIds as string[])
+      : [];
 
   const base = getAuthPythonBaseUrl();
 
