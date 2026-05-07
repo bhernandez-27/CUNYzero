@@ -17,12 +17,18 @@ export default function SiteHeader() {
           <span>College0</span>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-7 text-sm font-medium text-neutral-700">
+        <nav className="hidden lg:flex items-center gap-5 text-sm font-medium text-neutral-700" aria-label="Primary">
+          <Link href="/#program" className="hover:text-neutral-900 transition-colors">
+            Program
+          </Link>
           <Link href="/public" className="hover:text-neutral-900 transition-colors">
             Public dashboard
           </Link>
-          <Link href="/dashboard" className="hover:text-neutral-900 transition-colors">
-            Instructor
+          <Link href="/apply" className="hover:text-neutral-900 transition-colors">
+            Apply
+          </Link>
+          <Link href="/visitor-ai" className="hover:text-neutral-900 transition-colors">
+            Visitor AI
           </Link>
           <Link href="/#how-it-works" className="hover:text-neutral-900 transition-colors">
             How it Works
@@ -32,10 +38,39 @@ export default function SiteHeader() {
           </Link>
         </nav>
 
-        <div className="flex items-center gap-3">
+        <details className="relative lg:hidden">
+          <summary className="list-none cursor-pointer inline-flex items-center justify-center h-9 px-3 rounded-xl border border-black/10 bg-white text-sm font-semibold text-neutral-800 hover:bg-white/90 [&::-webkit-details-marker]:hidden">
+            Menu
+          </summary>
+          <nav
+            className="absolute right-0 top-[calc(100%+8px)] z-50 w-56 rounded-2xl border border-black/10 bg-white shadow-lg py-2 text-sm font-medium text-neutral-800"
+            aria-label="Mobile primary"
+          >
+            <Link href="/#program" className="block px-4 py-2.5 hover:bg-neutral-50">
+              Program
+            </Link>
+            <Link href="/public" className="block px-4 py-2.5 hover:bg-neutral-50">
+              Public dashboard
+            </Link>
+            <Link href="/apply" className="block px-4 py-2.5 hover:bg-neutral-50">
+              Apply
+            </Link>
+            <Link href="/visitor-ai" className="block px-4 py-2.5 hover:bg-neutral-50">
+              Visitor AI
+            </Link>
+            <Link href="/#how-it-works" className="block px-4 py-2.5 hover:bg-neutral-50">
+              How it Works
+            </Link>
+            <Link href="/#contact" className="block px-4 py-2.5 hover:bg-neutral-50">
+              Contact
+            </Link>
+          </nav>
+        </details>
+
+        <div className="flex items-center gap-2 sm:gap-3">
           <Link
             href="/public"
-            className="hidden sm:inline-flex text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition"
+            className="hidden md:inline-flex text-sm font-semibold text-neutral-700 hover:text-neutral-900 transition"
           >
             Explore
           </Link>
