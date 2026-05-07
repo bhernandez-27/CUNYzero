@@ -18,6 +18,7 @@ export default function RegistrationPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [periodClosed, setPeriodClosed] = useState(false);
   const [conflictHighlight, setConflictHighlight] = useState<string[] | null>(null);
   const [ghostRow, setGhostRow] = useState<SectionRow | null>(null);
 
@@ -46,6 +47,14 @@ export default function RegistrationPage() {
     void (async () => {
       try {
         const res = await fetch("/api/registration/sections", { cache: "no-store" });
+        if (res.status === 403) {
+          const err = (await res.json()) as { error?: string };
+          if (err.error === "PERIOD_CLOSED") {
+            if (!alive) return;
+            setPeriodClosed(true);
+            return;
+          }
+        }
         if (!res.ok) throw new Error("Failed to load sections");
         const data = (await res.json()) as RegistrationSectionDTO[];
         if (!alive) return;
@@ -53,6 +62,7 @@ export default function RegistrationPage() {
           data.map((s) => ({
             ...s,
             status: s.initialStatus ?? "NOT_ENROLLED",
+            previousGrade: s.previousGrade ?? null,
           })),
         );
       } catch {
@@ -143,6 +153,18 @@ export default function RegistrationPage() {
         kind: "error",
         title: "Course load limit exceeded",
         message: "You can only register for up to 4 courses.",
+      });
+      setBusyRowId(null);
+      return;
+    }
+
+    // Retake rule: block if student previously passed this course (grade != F and grade != null).
+    const grade = target.previousGrade;
+    if (grade != null && grade !== "F") {
+      pushToast({
+        kind: "error",
+        title: "Retake not allowed",
+        message: `You passed ${sectionId} with grade ${grade}. Retakes are only allowed after a failing grade.`,
       });
       setBusyRowId(null);
       return;
@@ -280,11 +302,18 @@ export default function RegistrationPage() {
       <DashboardShell
         main={
           <>
+            {periodClosed ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+                <span className="font-semibold">Registration is closed.</span>{" "}
+                Course registration is only available during the Course Registration period. Check back when the Registrar opens the next registration window.
+              </div>
+            ) : null}
+
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="text-lg font-semibold text-slate-900">Registration</div>
                 <div className="mt-1 text-sm text-slate-600">
-                  Select 2–4 courses, then confirm. Outcomes match the Phase II prototype (ENROLLED / WAITLISTED / conflict / load limit).
+                  Select 2–4 courses, then confirm. Conflicts, seat caps, and waitlist placement are enforced by the backend.
                 </div>
               </div>
 
@@ -292,15 +321,15 @@ export default function RegistrationPage() {
                 <button
                   type="button"
                   onClick={() => void confirmRegistration()}
-                  disabled={confirming || busyRowId !== null}
+                  disabled={confirming || busyRowId !== null || periodClosed}
                   className={[
                     "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold transition",
-                    selectionCount < 2 || selectionCount > 4
+                    selectionCount < 2 || selectionCount > 4 || periodClosed
                       ? "bg-slate-100 text-slate-500"
                       : "bg-[#F07E62] text-white shadow-[0_12px_22px_rgba(240,126,98,0.25)] hover:brightness-[0.97] active:brightness-[0.95]",
                     confirming ? "opacity-70" : "",
                   ].join(" ")}
-                  aria-disabled={selectionCount < 2 || selectionCount > 4}
+                  aria-disabled={selectionCount < 2 || selectionCount > 4 || periodClosed}
                   title={selectionCount < 2 ? "Select at least 2 courses" : selectionCount > 4 ? "Max 4 courses" : "Confirm registration"}
                 >
                   {confirming ? "Confirming…" : "Confirm registration"}
@@ -503,9 +532,6 @@ export default function RegistrationPage() {
 
                 <SelectionsPanel rows={rows} onRemove={removeSelection} onDrop={dropEnrollment} />
 
-              <div className="px-5 py-4 border-t border-black/5 text-xs text-slate-500">
-                Notes: this page is frontend-only for now (mock data). When the backend is ready, swap the mock list + selection/confirm handlers with real endpoints.
-              </div>
               </div>
 
               <div className="xl:sticky xl:top-24 h-full">
