@@ -15,7 +15,7 @@ const NAV: Record<UserRole, NavItem[]> = {
   student: [
     { label: "Dashboard", href: "/dashboard" },
     { label: "Registration", href: "/dashboard/registration" },
-    { label: "Grades", href: "/dashboard/grades", disabled: true },
+    { label: "Grades", href: "/dashboard/grades" },
     { label: "AI Advisor", href: "/dashboard/advisor", disabled: true },
     { label: "File Complaint", href: "/dashboard/complaint", disabled: true },
     { label: "Graduation", href: "/dashboard/graduation", disabled: true },
