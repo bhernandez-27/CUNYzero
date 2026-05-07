@@ -18,6 +18,8 @@ export type SectionRow = {
   timeSlots: TimeSlot[];
   seatsAvailable: number;
   status: RowStatus;
+  // null = never taken; "F" = failed (retake allowed); other = passed (blocked from re-registering).
+  previousGrade?: string | null;
 };
 
 export type ToastKind = "success" | "error" | "info";

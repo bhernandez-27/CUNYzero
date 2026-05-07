@@ -1,8 +1,11 @@
 import type { RowStatus, SectionRow, TimeSlot } from "@/components/dashboard/registration/types";
 
-export type RegistrationSectionDTO = Omit<SectionRow, "status"> & {
+// Shape Python must return for each section.
+// previousGrade: null = never taken; "F" = failed (retake allowed); anything else = passed (blocked).
+export type RegistrationSectionDTO = Omit<SectionRow, "status" | "previousGrade"> & {
   timeSlots: TimeSlot[];
   initialStatus?: Exclude<RowStatus, "NOT_ENROLLED" | "SELECTED">;
+  previousGrade?: string | null;
 };
 
 export type RegistrationConfirmError =
@@ -18,13 +21,27 @@ export type RegistrationConfirmError =
       min: number;
       max: number;
       count: number;
+    }
+  | {
+      code: "RETAKE_NOT_ALLOWED";
+      message: string;
+      sectionId: string;
+      previousGrade: string;
+    }
+  | {
+      code: "PERIOD_CLOSED";
+      message: string;
+    }
+  | {
+      code: "SECTION_NOT_FOUND";
+      message: string;
+      sectionId: string;
     };
 
 export type RegistrationConfirmRequest = {
-  studentId?: number;
-  term?: { semester: string; year: number };
-  selectedSectionIds: string[];
-  currentSectionIds?: string[]; // already enrolled / waitlisted
+  student_id: string;
+  selected_section_ids: string[];
+  current_section_ids: string[];
 };
 
 export type RegistrationConfirmResponse =
@@ -41,3 +58,8 @@ export type RegistrationConfirmResponse =
       errors: RegistrationConfirmError[];
     };
 
+// Error shape Python returns when the semester is not in the registration period.
+export type PeriodClosedError = {
+  error: "PERIOD_CLOSED";
+  message: string;
+};
