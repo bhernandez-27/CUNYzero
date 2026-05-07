@@ -18,5 +18,13 @@ export async function POST(req: Request) {
     );
   }
 
-  return proxyJsonToPython("/auth/logout", Object.keys(extra).length ? extra : {}, req);
+  const res = await proxyJsonToPython("/auth/logout", Object.keys(extra).length ? extra : {}, req);
+  // Clear our session cookie regardless of Python's response.
+  res.cookies.set("college0_user", "", {
+    httpOnly: true,
+    path: "/",
+    sameSite: "lax",
+    maxAge: 0,
+  });
+  return res;
 }
