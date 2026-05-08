@@ -275,9 +275,9 @@ def fetch_user_enrollments(student_id: int, db: Session):
             cl.credits,
             COALESCE(e.status, 'ENROLLED') as status,
             -- This will return an empty array if the table doesn't exist/is empty
-            (SELECT json_agg(json_build_object('day', m.day, 'start', m.start_time, 'end', m.end_time))
-             FROM class_day_met m 
-             WHERE m.class_id = cl.id) as time_slots
+            (SELECT json_agg(DISTINCT json_build_object('day', m.day, 'start', m.start_time, 'end', m.end_time))
+            FROM class_day_met m 
+            WHERE m.class_id = cl.id) as time_slots
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
