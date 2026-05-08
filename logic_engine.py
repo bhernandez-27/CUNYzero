@@ -20,7 +20,7 @@ def identify_cancelled_classes(db_classes, min_students=3):
     Takes a list of class rows from the DB. 
     Returns IDs of classes that don't meet the minimum enrollment.
     """
-    # Using .get() or index access depending on how you fetch from DB
+
     to_cancel = [c.id for c in db_classes if getattr(c, 'num_students_enrolled', 0) < min_students]
     return to_cancel
 
