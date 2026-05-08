@@ -70,36 +70,27 @@ export default function AuthPageClient() {
         </div>
 
         <div className="mt-8">
-          <div
-            id="panel-signin"
-            role="tabpanel"
-            aria-labelledby="tab-signin"
-            hidden={mode !== "signin"}
-            className={mode === "signin" ? "block" : "hidden"}
-          >
-            <SignInForm />
-            <p className="mt-6 text-center text-sm text-neutral-600">
-              New here?{" "}
-              <button type="button" onClick={() => setMode("signup")} className="font-semibold text-[#F07E62] hover:underline">
-                Create an account
-              </button>
-            </p>
-          </div>
-          <div
-            id="panel-signup"
-            role="tabpanel"
-            aria-labelledby="tab-signup"
-            hidden={mode !== "signup"}
-            className={mode === "signup" ? "block" : "hidden"}
-          >
-            <SignUpForm />
-            <p className="mt-6 text-center text-sm text-neutral-600">
-              Already have an account?{" "}
-              <button type="button" onClick={() => setMode("signin")} className="font-semibold text-[#F07E62] hover:underline">
-                Sign in
-              </button>
-            </p>
-          </div>
+          {mode === "signin" ? (
+            <div id="panel-signin" role="tabpanel" aria-labelledby="tab-signin">
+              <SignInForm />
+              <p className="mt-6 text-center text-sm text-neutral-600">
+                New here?{" "}
+                <button type="button" onClick={() => setMode("signup")} className="font-semibold text-[#F07E62] hover:underline">
+                  Create an account
+                </button>
+              </p>
+            </div>
+          ) : (
+            <div id="panel-signup" role="tabpanel" aria-labelledby="tab-signup">
+              <SignUpForm />
+              <p className="mt-6 text-center text-sm text-neutral-600">
+                Already have an account?{" "}
+                <button type="button" onClick={() => setMode("signin")} className="font-semibold text-[#F07E62] hover:underline">
+                  Sign in
+                </button>
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

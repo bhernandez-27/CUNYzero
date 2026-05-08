@@ -8,6 +8,7 @@ export default function SignUpForm() {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   function handleSubmit(e: SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -90,13 +91,22 @@ export default function SignUpForm() {
         />
       </div>
       <div>
-        <label htmlFor="signup-password" className="block text-sm font-medium text-neutral-800">
-          Password
-        </label>
+        <div className="flex items-center justify-between">
+          <label htmlFor="signup-password" className="block text-sm font-medium text-neutral-800">
+            Password
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            className="text-xs font-semibold text-[#F07E62] hover:underline"
+          >
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        </div>
         <input
           id="signup-password"
           name="password"
-          type="password"
+          type={showPassword ? "text" : "password"}
           autoComplete="new-password"
           required
           minLength={8}
@@ -111,7 +121,7 @@ export default function SignUpForm() {
         <input
           id="signup-confirm"
           name="confirm"
-          type="password"
+          type={showPassword ? "text" : "password"}
           autoComplete="new-password"
           required
           minLength={8}
