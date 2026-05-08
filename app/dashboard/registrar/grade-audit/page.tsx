@@ -4,15 +4,19 @@ import { useEffect, useState } from "react";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import type { ClassGradeAuditDTO } from "@/app/api/registrar/grade-audit/route";
 
-type AuditAction = "warn_instructor" | "dismiss_instructor" | "dismiss_flag";
+// Actions that fully resolve the flag
+type FinalAction = "warn_instructor" | "dismiss_instructor" | "dismiss_flag";
+// The initial step before a final decision
+type RequestAction = "request_justification";
+type AuditAction = RequestAction | FinalAction;
 
-const ACTION_LABELS: Record<AuditAction, string> = {
+const FINAL_ACTION_LABELS: Record<FinalAction, string> = {
   warn_instructor: "Warn instructor",
   dismiss_instructor: "Dismiss instructor",
-  dismiss_flag: "Accept justification",
+  dismiss_flag: "Clear flag — no action needed",
 };
 
-const ACTION_STYLES: Record<AuditAction, string> = {
+const FINAL_ACTION_STYLES: Record<FinalAction, string> = {
   warn_instructor: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
   dismiss_instructor: "border-red-200 bg-red-50 text-red-700 hover:bg-red-100",
   dismiss_flag: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
@@ -20,7 +24,7 @@ const ACTION_STYLES: Record<AuditAction, string> = {
 
 type ActiveAudit = {
   cls: ClassGradeAuditDTO;
-  action: AuditAction | null;
+  action: FinalAction | null;
 };
 
 export default function GradeAuditPage() {
@@ -46,7 +50,7 @@ export default function GradeAuditPage() {
     })();
   }, []);
 
-  async function handleResolve(cls: ClassGradeAuditDTO, action: AuditAction) {
+  async function handleAction(cls: ClassGradeAuditDTO, action: AuditAction) {
     setProcessing(true);
     setActionError(null);
     try {
@@ -58,14 +62,28 @@ export default function GradeAuditPage() {
       });
       const payload = (await res.json()) as { status?: string; message?: string };
       if (!res.ok) {
-        setActionError(payload.message ?? "Could not resolve flag. Try again.");
+        setActionError(payload.message ?? "Could not process action. Try again.");
         setProcessing(false);
         return;
       }
-      setClasses((prev) =>
-        prev.map((c) => c.class_id === cls.class_id ? { ...c, resolved: true, flagged: false } : c),
-      );
-      setActive(null);
+
+      if (action === "request_justification") {
+        // Flag stays open — just mark justification as requested
+        setClasses((prev) =>
+          prev.map((c) =>
+            c.class_id === cls.class_id ? { ...c, justification_requested: true } : c,
+          ),
+        );
+        setActive(null);
+      } else {
+        // Final action — resolve the flag
+        setClasses((prev) =>
+          prev.map((c) =>
+            c.class_id === cls.class_id ? { ...c, resolved: true, flagged: false } : c,
+          ),
+        );
+        setActive(null);
+      }
     } catch {
       setActionError("Network error. Check your connection and try again.");
     } finally {
@@ -83,42 +101,82 @@ export default function GradeAuditPage() {
           <div className="max-w-3xl">
             <div className="text-lg font-semibold text-slate-900">Grade Audit</div>
             <div className="mt-1 text-sm text-slate-500">
-              Classes with a GPA above 3.5 or below 2.5 are flagged for review. Investigate and
-              take action or clear the flag.
+              Classes with a GPA above 3.5 or below 2.5 are flagged automatically. You can request
+              a justification from the instructor first, then decide whether to warn, dismiss, or
+              clear the flag.
             </div>
 
-            {/* Action panel */}
+            {/* Review panel */}
             {active && (
               <div className="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-4">
-                <div className="text-sm font-semibold text-slate-900">
-                  Reviewing {active.cls.course_name} ({active.cls.section_id})
-                </div>
-                <div className="text-sm text-slate-600">
-                  Instructor: <span className="font-medium">{active.cls.instructor_name}</span> ·
-                  Class GPA: <span className={["font-bold", active.cls.flag_reason === "TOO_HIGH" ? "text-amber-600" : "text-red-600"].join(" ")}>
-                    {active.cls.class_gpa?.toFixed(2)}
-                  </span>
-                  {active.cls.flag_reason === "TOO_HIGH" && " (above 3.5 — possible grade inflation)"}
-                  {active.cls.flag_reason === "TOO_LOW" && " (below 2.5 — possible unfair grading)"}
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {active.cls.course_name} ({active.cls.section_id})
+                  </div>
+                  <div className="mt-0.5 text-sm text-slate-600">
+                    Instructor: <span className="font-medium">{active.cls.instructor_name}</span>
+                    {" · "}Class GPA:{" "}
+                    <span className={["font-bold", active.cls.flag_reason === "TOO_HIGH" ? "text-amber-600" : "text-red-600"].join(" ")}>
+                      {active.cls.class_gpa?.toFixed(2)}
+                    </span>
+                    <span className="text-slate-400">
+                      {active.cls.flag_reason === "TOO_HIGH" && " (above 3.5 — possible grade inflation)"}
+                      {active.cls.flag_reason === "TOO_LOW" && " (below 2.5 — possible unfair grading)"}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {(["warn_instructor", "dismiss_instructor", "dismiss_flag"] as AuditAction[]).map((a) => (
+                {/* Step 1 — request justification */}
+                {!active.cls.justification_requested && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-semibold text-slate-700">Step 1 — Ask the instructor</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        Send the instructor a notification asking them to explain this GPA distribution.
+                        The flag stays open until you take a final action.
+                      </div>
+                    </div>
                     <button
-                      key={a}
                       type="button"
-                      onClick={() => setActive({ ...active, action: a })}
+                      onClick={() => void handleAction(active.cls, "request_justification")}
                       disabled={processing}
-                      className={[
-                        "inline-flex items-center justify-center rounded-xl px-3.5 py-2 text-xs font-semibold border transition",
-                        active.action === a
-                          ? "bg-neutral-900 border-neutral-900 text-white"
-                          : ACTION_STYLES[a],
-                      ].join(" ")}
+                      className="shrink-0 inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-50"
                     >
-                      {ACTION_LABELS[a]}
+                      {processing ? "Sending…" : "Request justification"}
                     </button>
-                  ))}
+                  </div>
+                )}
+
+                {active.cls.justification_requested && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
+                    <span className="font-semibold">Justification requested.</span> The instructor has been notified.
+                    Once you have reviewed their response, take a final action below.
+                  </div>
+                )}
+
+                {/* Step 2 — final action */}
+                <div>
+                  <div className="text-xs font-semibold text-slate-700 mb-2">
+                    {active.cls.justification_requested ? "Step 2 — Final decision" : "Or take immediate action"}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(Object.keys(FINAL_ACTION_LABELS) as FinalAction[]).map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => setActive({ ...active, action: a })}
+                        disabled={processing}
+                        className={[
+                          "inline-flex items-center justify-center rounded-xl px-3.5 py-2 text-xs font-semibold border transition",
+                          active.action === a
+                            ? "bg-neutral-900 border-neutral-900 text-white"
+                            : FINAL_ACTION_STYLES[a],
+                        ].join(" ")}
+                      >
+                        {FINAL_ACTION_LABELS[a]}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {actionError && (
@@ -127,14 +185,14 @@ export default function GradeAuditPage() {
                   </div>
                 )}
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 border-t border-slate-100 pt-3">
                   <button
                     type="button"
-                    onClick={() => active.action && void handleResolve(active.cls, active.action)}
+                    onClick={() => active.action && void handleAction(active.cls, active.action)}
                     disabled={!active.action || processing}
                     className="inline-flex items-center justify-center rounded-xl bg-[#F07E62] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_22px_rgba(240,126,98,0.25)] hover:brightness-[0.97] transition disabled:opacity-50"
                   >
-                    {processing ? "Processing…" : "Confirm"}
+                    {processing ? "Processing…" : "Confirm action"}
                   </button>
                   <button
                     type="button"
@@ -142,7 +200,7 @@ export default function GradeAuditPage() {
                     disabled={processing}
                     className="text-sm font-semibold text-slate-600 hover:text-slate-900 transition"
                   >
-                    Cancel
+                    Close
                   </button>
                 </div>
               </div>
@@ -171,7 +229,7 @@ export default function GradeAuditPage() {
                             cls={c}
                             isActive={active?.cls.class_id === c.class_id}
                             disabled={active !== null && active.cls.class_id !== c.class_id}
-                            onOpen={() => setActive({ cls: c, action: null })}
+                            onOpen={() => { setActive({ cls: c, action: null }); setActionError(null); }}
                           />
                         ))}
                       </div>
@@ -181,7 +239,7 @@ export default function GradeAuditPage() {
                   {clean.length > 0 && (
                     <section>
                       <div className="mb-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                        All Classes
+                        All classes
                       </div>
                       <div className="space-y-3">
                         {clean.map((c) => (
@@ -252,6 +310,11 @@ function AuditCard({
             {cls.flagged && !cls.resolved && (
               <span className={["inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold", flagHigh ? "border-amber-200 bg-amber-50 text-amber-700" : "border-red-200 bg-red-50 text-red-700"].join(" ")}>
                 {flagHigh ? "GPA too high" : "GPA too low"}
+              </span>
+            )}
+            {cls.justification_requested && !cls.resolved && (
+              <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                Justification requested
               </span>
             )}
             {cls.resolved && (

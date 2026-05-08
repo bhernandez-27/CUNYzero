@@ -36,6 +36,7 @@ const NAV: Record<UserRole, NavItem[]> = {
     { label: "Taboo Words", href: "/dashboard/registrar/taboo" },
     { label: "Complaints", href: "/dashboard/registrar/complaints" },
     { label: "Grade Audit", href: "/dashboard/registrar/grade-audit" },
+    { label: "Graduation", href: "/dashboard/registrar/graduation" },
   ],
 };
 

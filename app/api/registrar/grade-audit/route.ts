@@ -17,9 +17,10 @@ import { getAuthPythonBaseUrl } from "@/lib/auth/proxyUpstream";
  *   - Registrar must review and either warn or dismiss the instructor.
  *
  * Action values:
- *   - "warn_instructor"    — issue 1 warning to the instructor
- *   - "dismiss_instructor" — immediately dismiss/fire the instructor
- *   - "dismiss_flag"       — accept instructor justification; clear the flag
+ *   - "request_justification" — notify the instructor to explain the GPA; flag stays open
+ *   - "warn_instructor"       — issue 1 warning to the instructor; flag resolved
+ *   - "dismiss_instructor"    — immediately dismiss/fire the instructor; flag resolved
+ *   - "dismiss_flag"          — registrar reviewed and found no issue; flag cleared, no penalty
  */
 
 export type ClassGradeAuditDTO = {
@@ -32,6 +33,7 @@ export type ClassGradeAuditDTO = {
   student_count: number;
   flagged: boolean;
   flag_reason: "TOO_HIGH" | "TOO_LOW" | null;
+  justification_requested: boolean;
   resolved: boolean;
 };
 
@@ -81,7 +83,7 @@ export async function PATCH(req: Request) {
     );
   }
 
-  const validActions = ["warn_instructor", "dismiss_instructor", "dismiss_flag"];
+  const validActions = ["request_justification", "warn_instructor", "dismiss_instructor", "dismiss_flag"];
   if (!validActions.includes(String(action))) {
     return NextResponse.json(
       { error: "invalid_action", message: `action must be one of: ${validActions.join(", ")}.` },
@@ -92,7 +94,11 @@ export async function PATCH(req: Request) {
   const base = getAuthPythonBaseUrl();
 
   if (!base) {
-    return NextResponse.json({ status: "RESOLVED", message: "Flag resolved successfully." });
+    const isResolved = action !== "request_justification";
+    return NextResponse.json({
+      status: isResolved ? "RESOLVED" : "JUSTIFICATION_REQUESTED",
+      message: isResolved ? "Flag resolved successfully." : "Instructor has been notified to provide justification.",
+    });
   }
 
   const cookie = req.headers.get("cookie");
@@ -136,6 +142,7 @@ function getMockAudit(): ClassGradeAuditDTO[] {
       student_count: 14,
       flagged: true,
       flag_reason: "TOO_HIGH",
+      justification_requested: false,
       resolved: false,
     },
     {
@@ -148,6 +155,7 @@ function getMockAudit(): ClassGradeAuditDTO[] {
       student_count: 20,
       flagged: false,
       flag_reason: null,
+      justification_requested: false,
       resolved: false,
     },
     {
@@ -160,6 +168,7 @@ function getMockAudit(): ClassGradeAuditDTO[] {
       student_count: 18,
       flagged: true,
       flag_reason: "TOO_LOW",
+      justification_requested: false,
       resolved: false,
     },
     {
@@ -172,6 +181,7 @@ function getMockAudit(): ClassGradeAuditDTO[] {
       student_count: 22,
       flagged: false,
       flag_reason: null,
+      justification_requested: false,
       resolved: false,
     },
   ];
