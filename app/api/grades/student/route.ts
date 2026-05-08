@@ -42,7 +42,7 @@ export async function GET(req: Request) {
   }
 
   const session = await getSession();
-  const studentId = session?.id ?? "";
+  const studentId = session?.id ?? "1"; // Default to "1" if no session
 
   const cookie = req.headers.get("cookie");
   const headers: Record<string, string> = { Accept: "application/json" };
