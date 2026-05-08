@@ -18,6 +18,7 @@ export type SectionRow = {
   timeSlots: TimeSlot[];
   seatsAvailable: number;
   status: RowStatus;
+  classId?: number;
   // null = never taken; "F" = failed (retake allowed); other = passed (blocked from re-registering).
   previousGrade?: string | null;
 };

@@ -2,8 +2,10 @@ import type { RowStatus, SectionRow, TimeSlot } from "@/components/dashboard/reg
 
 // Shape Python must return for each section.
 // previousGrade: null = never taken; "F" = failed (retake allowed); anything else = passed (blocked).
+// classId: numeric DB primary key — required for the /check-conflict DB-level validation.
 export type RegistrationSectionDTO = Omit<SectionRow, "status" | "previousGrade"> & {
   timeSlots: TimeSlot[];
+  classId?: number;
   initialStatus?: Exclude<RowStatus, "NOT_ENROLLED" | "SELECTED">;
   previousGrade?: string | null;
 };

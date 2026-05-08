@@ -143,9 +143,7 @@ export default function RegistrationPage() {
     if (target.status !== "NOT_ENROLLED") return;
 
     setBusyRowId(target.id);
-    pushToast({ kind: "info", title: "Selecting…", message: `Preparing ${sectionId}` });
-
-    await new Promise((r) => window.setTimeout(r, 750));
+    pushToast({ kind: "info", title: "Selecting…", message: `Checking ${sectionId}…` });
 
     // 7d: course load limit exceeded (SRS: pick 2–4)
     if (selectionCount >= 4) {
@@ -170,7 +168,7 @@ export default function RegistrationPage() {
       return;
     }
 
-    // 7c: schedule conflict (check against everything already selected/enrolled/waitlisted)
+    // Client-side schedule conflict check (fast, uses already-loaded timeSlots).
     const current = rows.filter((r) => r.status !== "NOT_ENROLLED");
     if (hasScheduleConflict(target, current)) {
       const conflicts = findScheduleConflicts(target, current);
@@ -189,6 +187,29 @@ export default function RegistrationPage() {
       }, 4500);
       setBusyRowId(null);
       return;
+    }
+
+    // DB-level conflict check via Python /check-conflict (catches races and multi-day classes).
+    if (target.classId != null) {
+      try {
+        const res = await fetch(`/api/registration/check-conflict?class_id=${target.classId}`, {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { conflict: boolean; message?: string };
+          if (data.conflict) {
+            pushToast({
+              kind: "error",
+              title: "Schedule conflict",
+              message: data.message ?? `${sectionId} conflicts with your current schedule.`,
+            });
+            setBusyRowId(null);
+            return;
+          }
+        }
+      } catch {
+        // Python unreachable — client-side check already passed, continue.
+      }
     }
 
     setRows((prev) =>

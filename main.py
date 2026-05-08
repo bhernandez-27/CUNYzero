@@ -60,24 +60,24 @@ def submit_review(review: ReviewCreate, db: Session = Depends(get_db)):
 
 @app.get("/check-conflict")
 def check_conflict(student_id: int, new_class_id: int, db: Session = Depends(get_db)):
-    new_time = db.execute(text("SELECT start_time, end_time, day FROM class_day_met WHERE class_id = :cid"), 
-                          {"cid": new_class_id}).fetchone()
-    if not new_time:
+    new_times = db.execute(text("SELECT start_time, end_time, day FROM class_day_met WHERE class_id = :cid"),
+                           {"cid": new_class_id}).fetchall()
+    if not new_times:
         raise HTTPException(status_code=404, detail="New class schedule not found")
-    
+
     existing_times = db.execute(text("""
-        SELECT m.start_time, m.end_time, m.day 
+        SELECT m.start_time, m.end_time, m.day
         FROM class_day_met m
         JOIN enrollment e ON m.class_id = e.class_id
         WHERE e.student_id = :sid AND e.status = 'ENROLLED'
     """), {"sid": student_id}).fetchall()
 
-    
-    for existing in existing_times:
-        if existing.day == new_time.day:
-            if check_overlap(new_time.start_time, new_time.end_time, existing.start_time, existing.end_time):
-                return {"conflict": True, "message": "Time conflict detected!"}
-                
+    for new_slot in new_times:
+        for existing in existing_times:
+            if existing.day == new_slot.day:
+                if check_overlap(new_slot.start_time, new_slot.end_time, existing.start_time, existing.end_time):
+                    return {"conflict": True, "message": "Time conflict detected!"}
+
     return {"conflict": False}
 
 @app.get("/students/{student_id}/standing")
