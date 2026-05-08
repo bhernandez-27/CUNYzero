@@ -30,8 +30,15 @@ export default function SignInForm() {
           setFormError(await authErrorMessage(res));
           return;
         }
+        const data = (await res.json()) as { role?: string };
         form.reset();
-        router.push("/dashboard");
+        if (data.role === "registrar") {
+          router.push("/dashboard/registrar/applications");
+        } else if (data.role === "instructor") {
+          router.push("/dashboard/instructor");
+        } else {
+          router.push("/dashboard");
+        }
       } catch {
         setFormError("Network error. Try again.");
       } finally {

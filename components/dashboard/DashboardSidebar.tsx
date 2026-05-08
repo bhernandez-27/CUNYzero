@@ -30,12 +30,12 @@ const NAV: Record<UserRole, NavItem[]> = {
     { label: "AI Q&A", href: "/dashboard/instructor/ai", disabled: true },
   ],
   registrar: [
-    { label: "Applications", href: "/dashboard/registrar/applications", disabled: true },
-    { label: "Semester", href: "/dashboard/registrar/semester", disabled: true },
-    { label: "Class Setup", href: "/dashboard/registrar/classes", disabled: true },
-    { label: "Taboo Words", href: "/dashboard/registrar/taboo", disabled: true },
-    { label: "Complaints", href: "/dashboard/registrar/complaints", disabled: true },
-    { label: "Grade Audit", href: "/dashboard/registrar/grade-audit", disabled: true },
+    { label: "Applications", href: "/dashboard/registrar/applications" },
+    { label: "Semester", href: "/dashboard/registrar/semester" },
+    { label: "Class Setup", href: "/dashboard/registrar/classes" },
+    { label: "Taboo Words", href: "/dashboard/registrar/taboo" },
+    { label: "Complaints", href: "/dashboard/registrar/complaints" },
+    { label: "Grade Audit", href: "/dashboard/registrar/grade-audit" },
   ],
 };
 
