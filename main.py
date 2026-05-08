@@ -273,27 +273,36 @@ def fetch_user_enrollments(student_id: int, db: Session):
             cl.id AS section_id,
             i.name AS instructor,
             cl.credits,
-            COALESCE(e.status, 'ENROLLED') as status
+            COALESCE(e.status, 'ENROLLED') as status,
+            -- This will return an empty array if the table doesn't exist/is empty
+            (SELECT json_agg(json_build_object('day', m.day, 'start', m.start_time, 'end', m.end_time))
+             FROM class_day_met m 
+             WHERE m.class_id = cl.id) as time_slots
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
         WHERE e.student_id = :sid
     """)
-    rows = db.execute(query, {"sid": student_id}).fetchall()
-    return [
-        {
-            "enrollment_id": str(r.enrollment_id),
-            "course_name": r.course_name,
-            "section_id": str(r.section_id).zfill(2),
-            "instructor": r.instructor or "Staff",
-            "credits": r.credits,
-            "status": r.status,
-            "can_drop": True,
-            "time_slots": [] 
-        } for r in rows
-    ]
-
+    
+    try:
+        rows = db.execute(query, {"sid": student_id}).fetchall()
+        return [
+            {
+                "enrollment_id": str(r.enrollment_id),
+                "course_name": r.course_name,
+                "section_id": str(r.section_id).zfill(2),
+                "instructor": r.instructor or "Staff",
+                "credits": r.credits,
+                "status": r.status,
+                "can_drop": True,
+                "time_slots": r.time_slots if r.time_slots else []
+            } for r in rows
+        ]
+    except Exception as e:
+        print(f"Database error in fetch_user_enrollments: {e}")
+        return [] 
+    
 @app.get("/api/registration/drop")
 def get_drop_list(student_id: Optional[str] = None, db: Session = Depends(get_db)):
     uid = 1 if not student_id or student_id == "" else int(student_id)
