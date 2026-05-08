@@ -29,13 +29,30 @@ export async function POST(req: Request) {
 
   const base = getAuthPythonBaseUrl();
   if (!base) {
-    return NextResponse.json(
-      {
-        error: "auth_backend_not_configured",
-        message: "Set AUTH_PYTHON_BASE_URL in .env.local to your Python service root.",
-      },
-      { status: 503 },
-    );
+    // Dev-mode mock login — maps well-known credentials to each role so the
+    // full UI can be tested without the Python backend running.
+    const DEV_ACCOUNTS: Record<string, { id: string; name: string; role: string }> = {
+      "student@dev.com":    { id: "dev-001", name: "Dev Student",    role: "student" },
+      "instructor@dev.com": { id: "dev-ins", name: "Dev Instructor", role: "instructor" },
+      "registrar@dev.com":  { id: "dev-reg", name: "Dev Registrar",  role: "registrar" },
+    };
+    const account = DEV_ACCOUNTS[email.trim().toLowerCase()];
+    if (!account || password !== "password") {
+      return NextResponse.json(
+        { error: "invalid_credentials", message: "Invalid email or password." },
+        { status: 401 },
+      );
+    }
+    const maxAge = Boolean(remember) ? 60 * 60 * 24 * 30 : 60 * 60 * 24;
+    const res = NextResponse.json({ ...account, message: "Signed in (dev mode)." });
+    res.cookies.set("college0_user", JSON.stringify(account), {
+      httpOnly: true,
+      path: "/",
+      sameSite: "lax",
+      maxAge,
+      secure: false,
+    });
+    return res;
   }
 
   const forwardCookie = req.headers.get("cookie");
