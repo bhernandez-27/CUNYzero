@@ -63,6 +63,7 @@ export default function RegistrationPage() {
             ...s,
             status: s.initialStatus ?? "NOT_ENROLLED",
             previousGrade: s.previousGrade ?? null,
+            timeSlots: s.timeSlots ?? [],
           })),
         );
       } catch {
@@ -397,7 +398,7 @@ export default function RegistrationPage() {
                     >
                       <option value="ALL">All</option>
                       {deptOptions.map((d) => (
-                        <option key={d} value={d}>
+                        <option key={`dept-${d}`} value={d}> 
                           {d}
                         </option>
                       ))}
@@ -486,7 +487,7 @@ export default function RegistrationPage() {
                       >
                         <option value="ANY">Any</option>
                         {creditOptions.map((c) => (
-                          <option key={c} value={String(c)}>
+                          <option key={`credit-${c}`} value={String(c)}>
                             {c}
                           </option>
                         ))}
