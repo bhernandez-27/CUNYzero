@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import DashboardShell from "@/components/dashboard/DashboardShell";
+import ChatPanel from "@/components/ai/ChatPanel";
 import type { AdvisorProfileDTO } from "@/app/api/advisor/route";
 
 type ChatMsg = {
@@ -43,9 +44,9 @@ export default function AdvisorPage() {
       <DashboardShell
         main={
           <div className="max-w-2xl">
-            <div className="text-lg font-semibold text-slate-900">AI Academic Advisor</div>
+            <div className="text-lg font-semibold text-slate-900">AI Assistant</div>
             <div className="mt-1 text-sm text-slate-500">
-              Personalized guidance based on your academic history, GPA, and graduation progress.
+              Personalized academic guidance and general college Q&amp;A in one place.
             </div>
 
             <div className="mt-6">
@@ -221,6 +222,7 @@ function AdvisorView({ profile }: { profile: AdvisorProfileDTO }) {
       </div>
 
       {/* Initial advisory / chat */}
+      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Academic Advisor</div>
       <div className="rounded-2xl bg-white border border-black/5 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between gap-3">
           <div>
@@ -313,6 +315,9 @@ function AdvisorView({ profile }: { profile: AdvisorProfileDTO }) {
           </form>
         </div>
       </div>
+      {/* General Q&A */}
+      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">General Q&amp;A</div>
+      <ChatPanel role="student" />
     </div>
   );
 }
