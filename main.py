@@ -1,5 +1,5 @@
+import datetime
 from pyexpat.errors import messages
-
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy import create_engine, text
 from pydantic import BaseModel
@@ -7,12 +7,13 @@ from sqlalchemy.orm import sessionmaker, Session
 from logic_engine import process_review, check_overlap
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
+from logic_engine import verify_graduation
 
 app = FastAPI(title="College0 Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], # Allows your Next.js app
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,6 +29,8 @@ class ReviewCreate(BaseModel):
     class_id: int
     text_content: str
     stars: int
+class DropRequest(BaseModel):
+    enrollment_id: int
 
 def get_db():
     db = SessionLocal()
@@ -261,3 +264,149 @@ def get_student_grades(student_id: Optional[str] = None, db: Session = Depends(g
             }
         ]
     }
+
+def fetch_user_enrollments(student_id: int, db: Session):
+    query = text("""
+        SELECT 
+            e.id AS enrollment_id,
+            co.name AS course_name,
+            cl.id AS section_id,
+            i.name AS instructor,
+            cl.credits,
+            COALESCE(e.status, 'ENROLLED') as status
+        FROM enrollment e
+        JOIN class cl ON e.class_id = cl.id
+        JOIN course co ON cl.course_id = co.id
+        LEFT JOIN instructor i ON cl.professor_id = i.id
+        WHERE e.student_id = :sid
+    """)
+    rows = db.execute(query, {"sid": student_id}).fetchall()
+    return [
+        {
+            "enrollment_id": str(r.enrollment_id),
+            "course_name": r.course_name,
+            "section_id": str(r.section_id).zfill(2),
+            "instructor": r.instructor or "Staff",
+            "credits": r.credits,
+            "status": r.status,
+            "can_drop": True,
+            "time_slots": [] 
+        } for r in rows
+    ]
+
+@app.get("/api/registration/drop")
+def get_drop_list(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    uid = 1 if not student_id or student_id == "" else int(student_id)
+    return fetch_user_enrollments(uid, db)
+
+@app.get("/registration/enrollments")
+def fallback_enrollments(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    uid = 1 if not student_id or student_id == "" else int(student_id)
+    return fetch_user_enrollments(uid, db)
+
+@app.post("/graduation/apply")
+def apply_for_graduation(data: dict, db: Session = Depends(get_db)):
+    sid = data.get("student_id")
+    
+    
+    completed = db.execute(text("""
+    SELECT COUNT(*) FROM enrollment 
+    WHERE student_id = :sid 
+    AND number_grade IS NOT NULL 
+    AND number_grade > 0
+"""), {"sid": sid}).scalar() or 0
+    
+    eligible, reason = verify_graduation(completed, 3.0)
+    
+    if eligible:
+        db.execute(text("UPDATE student SET applied_for_grad = true WHERE id = :sid"), {"sid": sid})
+        db.commit()
+        return {"status": "submitted", "message": "Your graduation application has been submitted for Registrar review."}
+    else:
+       
+        db.execute(text("UPDATE student SET warnings = warnings + 1 WHERE id = :sid"), {"sid": sid})
+        db.commit()
+        return {"status": "warning_issued", "message": f"Application rejected: {reason}. A warning has been added to your record."}
+    
+@app.get("/warnings/student")
+def get_student_warnings(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    
+    sid = 1 if not student_id or student_id == "" else int(student_id)
+    
+    student = db.execute(
+        text("SELECT warnings FROM student WHERE id = :sid"), 
+        {"sid": sid}
+    ).fetchone()
+    
+    warning_count = student.warnings if student else 0
+    
+    return {
+        "student_id": str(sid),
+        "warning_count": warning_count,
+        "suspension_threshold": 3,
+        "suspended": warning_count >= 3,
+        "warnings": [
+            {
+                "warning_id": "WRN-AUTO",
+                "issued_at": datetime.now().isoformat(),
+                "reason": "Automatic system check",
+                "issued_by": "Registrar System",
+                "source": "system"
+            }
+        ] if warning_count > 0 else []
+    }
+
+@app.get("/graduation/status")
+def get_graduation_status(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    sid = 1 if not student_id or student_id == "" else int(student_id)
+    
+    count_query = text("""
+        SELECT COUNT(*) FROM enrollment 
+        WHERE student_id = :sid 
+        AND status = 'ENROLLED' 
+        AND number_grade IS NOT NULL 
+        AND number_grade > 0
+    """)
+    completed = db.execute(count_query, {"sid": sid}).scalar() or 0
+    
+    status_query = text("SELECT applied_for_grad FROM student WHERE id = :sid")
+    already_applied = db.execute(status_query, {"sid": sid}).scalar() or False
+
+    # Logic engine check
+    eligible, _ = verify_graduation(completed, 3.0) 
+
+    return {
+        "courses_completed": completed,
+        "courses_required": 8,
+        "eligible": eligible,
+        "already_applied": already_applied
+    }
+
+@app.get("/registration/sections")
+def get_sections(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+  
+    query = text("""
+        SELECT cl.id, co.name, co.course_code, cl.credits, i.name as instructor
+        FROM class cl
+        JOIN course co ON cl.course_id = co.id
+        LEFT JOIN instructor i ON cl.professor_id = i.id
+    """)
+    rows = db.execute(query).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+@app.get("/advisor/profile")
+def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+   
+    return {
+        "advisor_name": "Dr. Saptarashmi Bandyopadhyay",
+        "department": "Computer Science",
+        "office_hours": "Mon/Wed 2:00 PM - 4:00 PM",
+        "email": "sbandyopadhyay@ccny.cuny.edu",
+        "appointment_link": "https://calendly.com/advisor-meet"
+    }
+
+@app.get("/registration/enrollments")
+def get_registration_enrollments(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    uid = 1 if not student_id or student_id == "" else int(student_id)
+    return fetch_user_enrollments(uid, db)
