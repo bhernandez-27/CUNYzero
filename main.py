@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker, Session
 from logic_engine import process_review, check_overlap
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 
 app = FastAPI(title="College0 Backend")
 
@@ -69,9 +70,8 @@ def check_conflict(student_id: int, new_class_id: int, db: Session = Depends(get
         SELECT m.start_time, m.end_time, m.day 
         FROM class_day_met m
         JOIN enrollment e ON m.class_id = e.class_id
-        WHERE e.student_id = :sid AND e.status = 'ENROLLED'
+        WHERE e.student_id = :sid AND e.number_grade IS NULL
     """), {"sid": student_id}).fetchall()
-
     
     for existing in existing_times:
         if existing.day == new_time.day:
@@ -82,7 +82,6 @@ def check_conflict(student_id: int, new_class_id: int, db: Session = Depends(get
 
 @app.get("/students/{student_id}/standing")
 def get_student_standing(student_id: int, db: Session = Depends(get_db)):
-    # 1. Fetch Student Data
     student = db.execute(
         text("SELECT id, name, gpa, warnings, status FROM student WHERE id = :id"),
         {"id": student_id}
@@ -91,20 +90,20 @@ def get_student_standing(student_id: int, db: Session = Depends(get_db)):
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    # 2. Check for Repeated Failures (Alphanumeric course_id)
     repeat_fail_query = text("""
         SELECT EXISTS (
             SELECT 1 FROM enrollment e1
+            JOIN class cl1 ON e1.class_id = cl1.id
             JOIN enrollment e2 ON e1.student_id = e2.student_id
+            JOIN class cl2 ON e2.class_id = cl2.id
             WHERE e1.student_id = :id 
-            AND e1.course_id = e2.course_id
+            AND cl1.course_id = cl2.course_id
             AND e1.id <> e2.id
-            AND e1.grade = 'F' AND e2.grade = 'F'
+            AND e1.number_grade < 1.0 AND e2.number_grade < 1.0
         )
     """)
     has_repeated_failure = db.execute(repeat_fail_query, {"id": student_id}).scalar()
 
-    # 3. Count active courses
     course_count = db.execute(
         text("SELECT COUNT(*) FROM enrollment WHERE student_id = :id AND semester = 'Spring2026'"),
         {"id": student_id}
@@ -188,3 +187,77 @@ def login_user(user: LoginUser, db: Session = Depends(get_db)):
     print(f"Login attempt for: {user.email}")
     #allow any email/password for testing
     return {"status": "Success", "token": "fake-jwt-token", "user": {"email": user.email}}
+
+@app.get("/grades/student")
+def get_student_grades(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    uid = 1 if not student_id or student_id == "" else int(student_id)
+    
+    query = text("""
+        SELECT 
+            co.course_code, 
+            co.name AS course_name, 
+            e.number_grade, 
+            cl.credits,
+            cl.id AS section_id,
+            i.name AS instructor
+        FROM enrollment e
+        JOIN class cl ON e.class_id = cl.id
+        JOIN course co ON cl.course_id = co.id
+        LEFT JOIN instructor i ON cl.professor_id = i.id
+        WHERE e.student_id = :sid
+    """)
+    
+    rows = db.execute(query, {"sid": uid}).fetchall()
+    
+    if not rows:
+        return {"semesters": [], "cumulative_gpa": 0.0}
+    
+    def get_letter_grade(val):
+        if val is None: return "Pending"
+        if val >= 4.0: return "A"
+        if val >= 3.0: return "B"
+        if val >= 2.0: return "C"
+        if val >= 1.0: return "D"
+        return "F"
+
+    courses = []
+    total_points = 0
+    total_credits = 0
+
+    for r in rows:
+     
+        num_grade = float(r._mapping['number_grade']) if r._mapping['number_grade'] else None
+        letter_grade = get_letter_grade(num_grade)
+        credits = r._mapping['credits']
+        
+        courses.append({
+            "course_code": r._mapping['course_code'],
+            "course_name": r._mapping['course_name'], 
+            "section_id": str(r._mapping['section_id']).zfill(2), 
+            "credits": credits,
+            "grade": letter_grade,
+            "instructor": r._mapping['instructor'] or "Staff",
+            "grade_points": num_grade
+        })
+
+        if num_grade is not None:
+            total_points += (num_grade * credits)
+            total_credits += credits
+
+    gpa = round(total_points / total_credits, 2) if total_credits > 0 else 0.0
+
+    return {
+        "student_id": str(uid),
+        "cumulative_gpa": gpa,
+        "warning_count": 0,
+        "honor_roll": gpa >= 3.5,
+        "courses_completed": len([c for c in courses if c['grade'] != "Pending"]),
+        "semesters": [
+            {
+                "semester": "Spring",
+                "year": 2026,
+                "semester_gpa": gpa,
+                "courses": courses
+            }
+        ]
+    }
