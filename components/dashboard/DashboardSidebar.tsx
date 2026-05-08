@@ -17,6 +17,8 @@ const NAV: Record<UserRole, NavItem[]> = {
     { label: "Registration", href: "/dashboard/registration" },
     { label: "Grades", href: "/dashboard/grades" },
     { label: "AI Advisor", href: "/dashboard/advisor" },
+    { label: "AI Q&A", href: "/dashboard/ai" },
+    { label: "Warnings", href: "/dashboard/warnings" },
     { label: "Drop Course", href: "/dashboard/drop-course" },
     { label: "File Complaint", href: "/dashboard/complaint" },
     { label: "Graduation", href: "/dashboard/graduation" },
@@ -27,7 +29,7 @@ const NAV: Record<UserRole, NavItem[]> = {
     { label: "Grade Submission", href: "/dashboard/instructor/grades", disabled: true },
     { label: "Waitlist", href: "/dashboard/instructor/waitlist", disabled: true },
     { label: "File Complaint", href: "/dashboard/complaint" },
-    { label: "AI Q&A", href: "/dashboard/instructor/ai", disabled: true },
+    { label: "AI Q&A", href: "/dashboard/instructor/ai" },
   ],
   registrar: [
     { label: "Applications", href: "/dashboard/registrar/applications" },
