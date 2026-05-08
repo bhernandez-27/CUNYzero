@@ -103,10 +103,19 @@ export async function POST(req: Request) {
   if (upstream.ok && contentType.includes("application/json")) {
     try {
       const data = JSON.parse(rawText) as Record<string, unknown>;
-      const role = (data.role as string) ?? "student";
-      const name = (data.name as string) ?? (data.email as string) ?? "User";
-      const id = String(data.id ?? "");
-      // 30-day expiry if "remember me", otherwise a 24-hour session cookie.
+
+      // Email-based role fallback for when Python hasn't implemented real auth yet.
+      const DEV_ROLE_MAP: Record<string, { id: string; name: string; role: string }> = {
+        "student@dev.com":    { id: "dev-001", name: "Dev Student",    role: "student" },
+        "instructor@dev.com": { id: "dev-ins", name: "Dev Instructor", role: "instructor" },
+        "registrar@dev.com":  { id: "dev-reg", name: "Dev Registrar",  role: "registrar" },
+      };
+      const devAccount = DEV_ROLE_MAP[email.trim().toLowerCase()];
+
+      const role = (data.role as string) ?? devAccount?.role ?? "student";
+      const name = (data.name as string) ?? devAccount?.name ?? (data.email as string) ?? "User";
+      const id = String(data.id ?? devAccount?.id ?? "");
+
       const maxAge = Boolean(remember) ? 60 * 60 * 24 * 30 : 60 * 60 * 24;
       res.cookies.set("college0_user", JSON.stringify({ id, name, role }), {
         httpOnly: true,

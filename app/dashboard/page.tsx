@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import ChatPanel from "@/components/ai/ChatPanel";
 import DashboardShell from "@/components/dashboard/DashboardShell";
+import { getSession } from "@/lib/auth/session";
 
 type ClassSummary = {
   id: number;
@@ -14,6 +16,10 @@ type ClassSummary = {
 };
 
 export default async function DashboardPage() {
+  const session = await getSession();
+  if (session?.role === "registrar") redirect("/dashboard/registrar/applications");
+  if (session?.role === "instructor") redirect("/dashboard/instructor");
+
   // Fetch the top 3 classes
   try {
     const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
