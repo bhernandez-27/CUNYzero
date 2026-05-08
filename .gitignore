@@ -46,3 +46,4 @@ next-env.d.ts
 *.drawio
 
 *.cursor
+__pycache__/
