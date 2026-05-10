@@ -19,6 +19,7 @@ export type SectionRow = {
   seatsAvailable: number;
   status: RowStatus;
   classId?: number;
+  enrollmentId?: number;
   // null = never taken; "F" = failed (retake allowed); other = passed (blocked from re-registering).
   previousGrade?: string | null;
 };

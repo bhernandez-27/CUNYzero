@@ -15,11 +15,11 @@ type NavItem = {
 const NAV: Record<UserRole, NavItem[]> = {
   student: [
     { label: "Dashboard", href: "/dashboard" },
+    { label: "My Classes", href: "/dashboard/classes" },
     { label: "Registration", href: "/dashboard/registration" },
     { label: "Grades", href: "/dashboard/grades" },
     { label: "AI Assistant", href: "/dashboard/advisor" },
     { label: "Warnings", href: "/dashboard/warnings" },
-    { label: "Drop Course", href: "/dashboard/drop-course" },
     { label: "File Complaint", href: "/dashboard/complaint" },
     { label: "Graduation", href: "/dashboard/graduation" },
   ],

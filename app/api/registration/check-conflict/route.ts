@@ -26,7 +26,9 @@ export async function GET(req: Request) {
   }
 
   const session = await getSession();
-  const studentId = session?.id ?? "";
+  // dev-001 / dev-ins are non-numeric — fall back to id 1 so Python doesn't 422
+  const rawId = session?.id ?? "1";
+  const studentId = /^\d+$/.test(rawId) ? rawId : "1";
 
   const cookie = req.headers.get("cookie");
   const headers: Record<string, string> = { Accept: "application/json" };

@@ -21,6 +21,9 @@ export default function RegistrationPage() {
   const [periodClosed, setPeriodClosed] = useState(false);
   const [conflictHighlight, setConflictHighlight] = useState<string[] | null>(null);
   const [ghostRow, setGhostRow] = useState<SectionRow | null>(null);
+  const [dropTarget, setDropTarget] = useState<SectionRow | null>(null);
+  const [dropBusy, setDropBusy] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
 
   const [dept, setDept] = useState<string>("ALL");
   const [days, setDays] = useState<Record<"Mon" | "Tue" | "Wed" | "Thu" | "Fri", boolean>>({
@@ -242,22 +245,50 @@ export default function RegistrationPage() {
   function dropEnrollment(sectionId: string) {
     const target = rows.find((r) => r.sectionId === sectionId);
     if (!target || (target.status !== "ENROLLED" && target.status !== "WAITLISTED")) return;
-    setRows((prev) =>
-      prev.map((r) =>
-        r.id === target.id
-          ? {
-              ...r,
-              status: "NOT_ENROLLED",
-              seatsAvailable: target.status === "ENROLLED" ? r.seatsAvailable + 1 : r.seatsAvailable,
-            }
-          : r,
-      ),
-    );
-    pushToast({
-      kind: "info",
-      title: "Dropped",
-      message: `${sectionId} was removed from your schedule${target.status === "WAITLISTED" ? " (waitlist)" : ""}.`,
-    });
+    setDropTarget(target);
+    setDropError(null);
+  }
+
+  async function confirmDrop() {
+    if (!dropTarget) return;
+    if (!dropTarget.enrollmentId) {
+      setDropError("Cannot drop this course — enrollment ID not found. Try reloading the page.");
+      return;
+    }
+    setDropBusy(true);
+    setDropError(null);
+    try {
+      const res = await fetch("/api/registration/drop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enrollment_id: String(dropTarget.enrollmentId) }),
+      });
+      const data = (await res.json()) as { status?: string; message?: string; error?: string };
+      if (!res.ok) {
+        setDropError(data.message ?? "Drop failed. Please try again.");
+        return;
+      }
+      // Reload sections from the server to get accurate seat counts and statuses
+      setDropTarget(null);
+      setLoading(true);
+      const fresh = await fetch("/api/registration/sections", { cache: "no-store" });
+      if (fresh.ok) {
+        const data2 = (await fresh.json()) as RegistrationSectionDTO[];
+        setRows(data2.map((s) => ({
+          ...s,
+          status: s.initialStatus ?? "NOT_ENROLLED",
+          previousGrade: s.previousGrade ?? null,
+          timeSlots: s.timeSlots ?? [],
+        })));
+      }
+      setLoading(false);
+      pushToast({ kind: "info", title: "Dropped", message: `${dropTarget.courseName} removed from your schedule.` });
+    } catch {
+      setDropError("Network error. Check your connection and try again.");
+    } finally {
+      setDropBusy(false);
+    }
   }
 
   async function confirmRegistration() {
@@ -320,6 +351,48 @@ export default function RegistrationPage() {
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-[#F7F5F1]">
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+
+      {/* Drop confirmation modal */}
+      {dropTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-black/5 p-6">
+            <div className="text-base font-semibold text-slate-900">Drop course?</div>
+            <p className="mt-2 text-sm text-slate-600">
+              Are you sure you want to drop{" "}
+              <span className="font-semibold text-slate-900">{dropTarget.courseName}</span>?
+              {dropTarget.status === "WAITLISTED"
+                ? " You will lose your waitlist position."
+                : " If another student is on the waitlist, they will be promoted."}
+            </p>
+
+            {dropError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {dropError}
+              </div>
+            )}
+
+            <div className="mt-5 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void confirmDrop()}
+                disabled={dropBusy}
+                className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60 transition"
+              >
+                {dropBusy ? "Dropping…" : "Yes, drop course"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setDropTarget(null); setDropError(null); }}
+                disabled={dropBusy}
+                className="text-sm font-semibold text-slate-600 hover:text-slate-900 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DashboardShell
         main={
           <>

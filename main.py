@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker, Session
 from logic_engine import process_review, check_overlap
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional, List
 from logic_engine import verify_graduation
 
 app = FastAPI(title="College0 Backend")
@@ -30,7 +30,8 @@ class ReviewCreate(BaseModel):
     text_content: str
     stars: int
 class DropRequest(BaseModel):
-    enrollment_id: int
+    enrollment_id: str
+    student_id: Optional[str] = None
 
 def get_db():
     db = SessionLocal()
@@ -74,13 +75,13 @@ def check_conflict(student_id: int, new_class_id: int, db: Session = Depends(get
         FROM class_day_met m
         JOIN enrollment e ON m.class_id = e.class_id
         WHERE e.student_id = :sid AND e.number_grade IS NULL
-        WHERE e.student_id = :sid AND e.number_grade IS NULL
     """), {"sid": student_id}).fetchall()
-    
-    for existing in existing_times:
-        if existing.day == new_time.day:
-            if check_overlap(new_time.start_time, new_time.end_time, existing.start_time, existing.end_time):
-                return {"conflict": True, "message": "Time conflict detected!"}
+
+    for new_time in new_times:
+        for existing in existing_times:
+            if existing.day == new_time.day:
+                if check_overlap(new_time.start_time, new_time.end_time, existing.start_time, existing.end_time):
+                    return {"conflict": True, "message": "Time conflict detected!"}
                 
     return {"conflict": False}
 
@@ -98,22 +99,18 @@ def get_student_standing(student_id: int, db: Session = Depends(get_db)):
         SELECT EXISTS (
             SELECT 1 FROM enrollment e1
             JOIN class cl1 ON e1.class_id = cl1.id
-            JOIN class cl1 ON e1.class_id = cl1.id
             JOIN enrollment e2 ON e1.student_id = e2.student_id
             JOIN class cl2 ON e2.class_id = cl2.id
-            JOIN class cl2 ON e2.class_id = cl2.id
-            WHERE e1.student_id = :id 
-            AND cl1.course_id = cl2.course_id
+            WHERE e1.student_id = :id
             AND cl1.course_id = cl2.course_id
             AND e1.id <> e2.id
-            AND e1.number_grade < 1.0 AND e2.number_grade < 1.0
             AND e1.number_grade < 1.0 AND e2.number_grade < 1.0
         )
     """)
     has_repeated_failure = db.execute(repeat_fail_query, {"id": student_id}).scalar()
 
     course_count = db.execute(
-        text("SELECT COUNT(*) FROM enrollment WHERE student_id = :id AND semester = 'Spring2026'"),
+        text("SELECT COUNT(*) FROM enrollment WHERE student_id = :id AND status = 'ENROLLED'"),
         {"id": student_id}
     ).scalar()
 
@@ -198,14 +195,17 @@ def login_user(user: LoginUser, db: Session = Depends(get_db)):
 
 @app.get("/grades/student")
 def get_student_grades(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    uid = 1 if not student_id or student_id == "" else int(student_id)
+    try:
+        uid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        uid = 1
     
     query = text("""
-        SELECT 
-            co.course_code, 
-            co.name AS course_name, 
-            e.number_grade, 
-            cl.credits,
+        SELECT
+            co.course_code,
+            co.name AS course_name,
+            e.number_grade,
+            co.credits,
             cl.id AS section_id,
             i.name AS instructor
         FROM enrollment e
@@ -277,13 +277,14 @@ def fetch_user_enrollments(student_id: int, db: Session):
             co.name AS course_name,
             cl.id AS section_id,
             i.name AS instructor,
-            cl.credits,
+            co.credits,
             COALESCE(e.status, 'ENROLLED') as status
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
         WHERE e.student_id = :sid
+          AND e.status IN ('ENROLLED', 'WAITLISTED')
     """)
     rows = db.execute(query, {"sid": student_id}).fetchall()
     return [
@@ -295,18 +296,107 @@ def fetch_user_enrollments(student_id: int, db: Session):
             "credits": r.credits,
             "status": r.status,
             "can_drop": True,
-            "time_slots": [] 
+            "time_slots": []
         } for r in rows
     ]
 
 @app.get("/api/registration/drop")
 def get_drop_list(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    uid = 1 if not student_id or student_id == "" else int(student_id)
+    try:
+        uid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        uid = 1
     return fetch_user_enrollments(uid, db)
+
+@app.post("/registration/drop")
+def drop_course(data: DropRequest, db: Session = Depends(get_db)):
+    try:
+        enrollment_id = int(data.enrollment_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid enrollment_id")
+
+    # Fetch the enrollment row
+    enrollment = db.execute(
+        text("""
+            SELECT e.id, e.student_id, e.class_id, e.status
+            FROM enrollment e
+            WHERE e.id = :eid
+        """),
+        {"eid": enrollment_id}
+    ).fetchone()
+
+    if not enrollment:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"error": "NOT_FOUND", "message": "Enrollment not found."})
+
+    if enrollment.status == "DROPPED":
+        return {"status": "DROPPED", "message": "Course was already dropped."}
+
+    # Enforce minimum course load: student must keep at least 2 active enrollments
+    active_count = db.execute(
+        text("""
+            SELECT COUNT(*) FROM enrollment
+            WHERE student_id = :sid
+              AND status IN ('ENROLLED', 'WAITLISTED')
+              AND id != :eid
+        """),
+        {"sid": enrollment.student_id, "eid": enrollment_id}
+    ).scalar() or 0
+
+    if active_count < 2:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=422, content={
+            "error": "MIN_LOAD",
+            "message": "Dropping this course would leave you below the 2-course minimum."
+        })
+
+    # Mark as dropped
+    db.execute(
+        text("UPDATE enrollment SET status = 'DROPPED' WHERE id = :eid"),
+        {"eid": enrollment_id}
+    )
+
+    # Free up the seat if they were enrolled (not waitlisted)
+    if enrollment.status == "ENROLLED":
+        db.execute(
+            text("UPDATE class SET num_students_enrolled = GREATEST(0, num_students_enrolled - 1) WHERE id = :cid"),
+            {"cid": enrollment.class_id}
+        )
+        # Promote first waitlisted student if any
+        next_waiter = db.execute(
+            text("""
+                SELECT id FROM enrollment
+                WHERE class_id = :cid AND status = 'WAITLISTED'
+                ORDER BY enrolled_at_timestamp ASC
+                LIMIT 1
+            """),
+            {"cid": enrollment.class_id}
+        ).fetchone()
+        if next_waiter:
+            db.execute(
+                text("UPDATE enrollment SET status = 'ENROLLED' WHERE id = :eid"),
+                {"eid": next_waiter.id}
+            )
+            db.execute(
+                text("UPDATE class SET num_students_enrolled = num_students_enrolled + 1, current_num_on_waitlist = GREATEST(0, current_num_on_waitlist - 1) WHERE id = :cid"),
+                {"cid": enrollment.class_id}
+            )
+
+    elif enrollment.status == "WAITLISTED":
+        db.execute(
+            text("UPDATE class SET current_num_on_waitlist = GREATEST(0, current_num_on_waitlist - 1) WHERE id = :cid"),
+            {"cid": enrollment.class_id}
+        )
+
+    db.commit()
+    return {"status": "DROPPED", "message": "Course dropped successfully."}
 
 @app.get("/registration/enrollments")
 def fallback_enrollments(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    uid = 1 if not student_id or student_id == "" else int(student_id)
+    try:
+        uid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        uid = 1
     return fetch_user_enrollments(uid, db)
 
 @app.post("/graduation/apply")
@@ -329,22 +419,27 @@ def apply_for_graduation(data: dict, db: Session = Depends(get_db)):
         return {"status": "submitted", "message": "Your graduation application has been submitted for Registrar review."}
     else:
        
-        db.execute(text("UPDATE student SET warnings = warnings + 1 WHERE id = :sid"), {"sid": sid})
+        db.execute(
+            text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
+            {"uid": sid, "desc": f"Reckless graduation application: {reason}"}
+        )
         db.commit()
         return {"status": "warning_issued", "message": f"Application rejected: {reason}. A warning has been added to your record."}
     
 @app.get("/warnings/student")
 def get_student_warnings(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    try:
+        sid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        sid = 1
     
-    sid = 1 if not student_id or student_id == "" else int(student_id)
-    
-    student = db.execute(
-        text("SELECT warnings FROM student WHERE id = :sid"), 
+    rows = db.execute(
+        text("SELECT id, description, cleared FROM warning WHERE user_id = :sid"),
         {"sid": sid}
-    ).fetchone()
-    
-    warning_count = student.warnings if student else 0
-    
+    ).fetchall()
+
+    warning_count = sum(1 for r in rows if not r.cleared)
+
     return {
         "student_id": str(sid),
         "warning_count": warning_count,
@@ -352,18 +447,23 @@ def get_student_warnings(student_id: Optional[str] = None, db: Session = Depends
         "suspended": warning_count >= 3,
         "warnings": [
             {
-                "warning_id": "WRN-AUTO",
-                "issued_at": datetime.now().isoformat(),
-                "reason": "Automatic system check",
+                "warning_id": str(r.id),
+                "issued_at": datetime.datetime.now().isoformat(),
+                "reason": r.description or "No reason provided",
                 "issued_by": "Registrar System",
-                "source": "system"
+                "source": "system",
+                "cleared": r.cleared
             }
-        ] if warning_count > 0 else []
+            for r in rows
+        ]
     }
 
 @app.get("/graduation/status")
 def get_graduation_status(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    sid = 1 if not student_id or student_id == "" else int(student_id)
+    try:
+        sid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        sid = 1
     
     count_query = text("""
         SELECT COUNT(*) FROM enrollment 
@@ -391,7 +491,7 @@ def get_graduation_status(student_id: Optional[str] = None, db: Session = Depend
 def get_sections(student_id: Optional[str] = None, db: Session = Depends(get_db)):
   
     query = text("""
-        SELECT cl.id, co.name, co.course_code, cl.credits, i.name as instructor
+        SELECT cl.id, co.name, co.course_code, co.credits, i.name as instructor
         FROM class cl
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
@@ -413,5 +513,104 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
 
 @app.get("/registration/enrollments")
 def get_registration_enrollments(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    uid = 1 if not student_id or student_id == "" else int(student_id)
+    try:
+        uid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        uid = 1
     return fetch_user_enrollments(uid, db)
+
+
+class ConfirmRegistrationRequest(BaseModel):
+    student_id: str
+    selected_section_ids: List[str]
+    current_section_ids: List[str]
+
+@app.post("/registration/confirm")
+def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends(get_db)):
+    # Normalize student_id — dev accounts send "dev-001" etc.
+    try:
+        sid = int(data.student_id)
+    except (ValueError, TypeError):
+        sid = 1
+
+    # Section IDs are formatted as "{course_code}-{class_id:02}" e.g. "101-01".
+    # Extract the class_id from the numeric suffix after the last "-".
+    def parse_class_id(section_id: str):
+        try:
+            return int(section_id.split("-")[-1])
+        except (ValueError, IndexError):
+            return None
+
+    enrolled_out = []
+    waitlisted_out = []
+
+    for section_id in data.selected_section_ids:
+        class_id = parse_class_id(section_id)
+        if class_id is None:
+            continue
+
+        # Skip if already enrolled in this class
+        already = db.execute(
+            text("SELECT id FROM enrollment WHERE student_id = :sid AND class_id = :cid LIMIT 1"),
+            {"sid": sid, "cid": class_id}
+        ).fetchone()
+        if already:
+            enrolled_out.append(section_id)
+            continue
+
+        # Get seat / waitlist counts
+        cls = db.execute(
+            text("""
+                SELECT max_num_students, num_students_enrolled,
+                       waitlist_max, current_num_on_waitlist
+                FROM class WHERE id = :cid
+            """),
+            {"cid": class_id}
+        ).fetchone()
+        if not cls:
+            continue
+
+        seats_free = cls.max_num_students - cls.num_students_enrolled
+
+        if seats_free > 0:
+            # Enroll the student
+            db.execute(
+                text("""
+                    INSERT INTO enrollment (student_id, class_id, status)
+                    VALUES (:sid, :cid, 'ENROLLED')
+                """),
+                {"sid": sid, "cid": class_id}
+            )
+            db.execute(
+                text("UPDATE class SET num_students_enrolled = num_students_enrolled + 1 WHERE id = :cid"),
+                {"cid": class_id}
+            )
+            enrolled_out.append(section_id)
+
+        elif cls.current_num_on_waitlist < cls.waitlist_max:
+            # Add to waitlist
+            db.execute(
+                text("""
+                    INSERT INTO enrollment (student_id, class_id, status)
+                    VALUES (:sid, :cid, 'WAITLISTED')
+                """),
+                {"sid": sid, "cid": class_id}
+            )
+            db.execute(
+                text("UPDATE class SET current_num_on_waitlist = current_num_on_waitlist + 1 WHERE id = :cid"),
+                {"cid": class_id}
+            )
+            waitlisted_out.append(section_id)
+
+        else:
+            # Full class, full waitlist — put on waitlist anyway so the student sees feedback
+            waitlisted_out.append(section_id)
+
+    db.commit()
+
+    return {
+        "status": "OK",
+        "enrolled": enrolled_out,
+        "waitlisted": waitlisted_out,
+        "errors": []
+    }

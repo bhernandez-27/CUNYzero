@@ -69,32 +69,16 @@ export async function getReviewContext(classId: number): Promise<ReviewContextRe
 }
 
 export async function submitReview(req: SubmitReviewRequest): Promise<SubmitReviewResult> {
-  await sleep(400);
-  const tabooCount = countTaboo(req.text);
-  if (tabooCount >= 3) {
-    return {
-      status: "BLOCKED",
-      reviewId: null,
-      finalText: null,
-      warningsIssued: 2,
-      message: "Review blocked. 2 warnings issued.",
-    };
+  const res = await fetch("/api/reviews", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ classId: req.classId, stars: req.stars, text: req.text }),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(err.message ?? `Review submission failed (${res.status})`);
   }
-  if (tabooCount >= 1) {
-    return {
-      status: "PUBLISHED_MASKED",
-      reviewId: Math.floor(Math.random() * 90000) + 10000,
-      finalText: maskTaboo(req.text),
-      warningsIssued: 1,
-      masked: true,
-    };
-  }
-  return {
-    status: "PUBLISHED",
-    reviewId: Math.floor(Math.random() * 90000) + 10000,
-    finalText: req.text,
-    warningsIssued: 0,
-  };
+  return res.json() as Promise<SubmitReviewResult>;
 }
 
 function sleep(ms: number) {

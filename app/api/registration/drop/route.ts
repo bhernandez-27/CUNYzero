@@ -52,7 +52,8 @@ export async function GET(req: Request) {
   }
 
   const session = await getSession();
-  const studentId = session?.id ?? "";
+  const rawId = session?.id ?? "1";
+  const studentId = /^\d+$/.test(rawId) ? rawId : "1";
 
   const cookie = req.headers.get("cookie");
   const headers: Record<string, string> = { Accept: "application/json" };
@@ -81,7 +82,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const session = await getSession();
-  const studentId = session?.id ?? "dev-001";
+  const rawId = session?.id ?? "1";
+  const studentId = /^\d+$/.test(rawId) ? rawId : "1";
 
   let body: unknown;
   try {

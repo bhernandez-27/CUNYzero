@@ -262,9 +262,9 @@ export default async function DashboardPage() {
               <div className="mt-6 rounded-2xl bg-white border border-black/5 shadow-sm p-6">
                 <div className="flex items-center justify-between gap-4">
                   <div className="text-sm font-semibold text-slate-900">Classes</div>
-                  <a href="#" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
+                  <Link href="/dashboard/classes" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
                     View all →
-                  </a>
+                  </Link>
                 </div>
 
                 {classes.length === 0 ? (

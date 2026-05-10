@@ -1,63 +1,138 @@
 import { NextResponse } from "next/server";
-import { getAuthPythonBaseUrl } from "@/lib/auth/proxyUpstream";
+import { Pool } from "pg";
 import { getSession } from "@/lib/auth/session";
 import { getMockRegistrationSections } from "@/lib/registration/mock";
+import type { RegistrationSectionDTO } from "@/lib/registration/apiTypes";
 
-/*
- * Python must implement:
- *   GET {AUTH_PYTHON_BASE_URL}/registration/sections?student_id={id}
- *
- * Success (200): RegistrationSectionDTO[]
- *   Each section object shape:
- *   {
- *     id: string,
- *     sectionId: string,
- *     courseName: string,
- *     department: string,
- *     credits: number,
- *     instructor: string,
- *     timeSlots: [{ day: "Mon"|"Tue"|"Wed"|"Thu"|"Fri", start: "HH:MM", end: "HH:MM" }],
- *     seatsAvailable: number,
- *     initialStatus: null | "ENROLLED" | "WAITLISTED",
- *     previousGrade: null | "A" | "B" | "C" | "D" | "F"
- *   }
- *
- * Period closed (403):
- *   { error: "PERIOD_CLOSED", message: "..." }
- */
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Map DB day strings → frontend short form
+const DAY_MAP: Record<string, string> = {
+  MONDAY: "Mon",
+  TUESDAY: "Tue",
+  WEDNESDAY: "Wed",
+  THURSDAY: "Thu",
+  FRIDAY: "Fri",
+};
+
+function toHHMM(t: string): string {
+  // "09:00:00" → "09:00"
+  return t ? t.slice(0, 5) : t;
+}
+
+function numericToLetter(grade: number | null): string | null {
+  if (grade == null) return null;
+  if (grade >= 4.0) return "A";
+  if (grade >= 3.0) return "B";
+  if (grade >= 2.0) return "C";
+  if (grade >= 1.0) return "D";
+  return "F";
+}
+
 export async function GET(req: Request) {
-  const base = getAuthPythonBaseUrl();
-
-  if (!base) {
-    // No backend configured — return mock data so the UI works during development.
+  // If no DATABASE_URL, fall back to mock so local dev without a DB still works
+  if (!process.env.DATABASE_URL) {
     return NextResponse.json(getMockRegistrationSections());
   }
 
   const session = await getSession();
-  const studentId = session?.id ?? "";
+  // dev-001 / dev-ins are fake — use student id 1 for DB queries
+  const rawId = session?.id ?? "1";
+  const studentId = /^\d+$/.test(rawId) ? Number(rawId) : 1;
 
-  const cookie = req.headers.get("cookie");
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (cookie) headers.Cookie = cookie;
-
-  let upstream: Response;
   try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 10_000);
-    upstream = await fetch(
-      `${base}/registration/sections?student_id=${encodeURIComponent(studentId)}`,
-      { headers, signal: controller.signal },
+    const { rows } = await pool.query(
+      `
+      SELECT
+        c.id,
+        co.name           AS course_name,
+        co.course_code,
+        co.credits,
+        i.name            AS instructor,
+        c.max_num_students,
+        c.num_students_enrolled,
+        -- time slots as JSON array
+        COALESCE(
+          (SELECT json_agg(json_build_object(
+              'day',        cdm.day,
+              'start_time', cdm.start_time,
+              'end_time',   cdm.end_time
+            ))
+           FROM class_day_met cdm
+           WHERE cdm.class_id = c.id),
+          '[]'::json
+        ) AS time_slots,
+        -- current student's enrollment status in this class (NULL = not enrolled)
+        (SELECT COALESCE(e.status, 'ENROLLED')
+         FROM enrollment e
+         WHERE e.class_id = c.id AND e.student_id = $1
+         LIMIT 1) AS enrollment_status,
+        -- enrollment row id (needed for the drop API)
+        (SELECT e.id
+         FROM enrollment e
+         WHERE e.class_id = c.id AND e.student_id = $1
+         LIMIT 1) AS enrollment_id,
+        -- most recent numeric grade for this course (for retake rules)
+        (SELECT e2.number_grade
+         FROM enrollment e2
+         JOIN class c2 ON e2.class_id = c2.id
+         WHERE e2.student_id = $1
+           AND c2.course_id = co.id
+           AND e2.number_grade IS NOT NULL
+         ORDER BY e2.id DESC
+         LIMIT 1) AS previous_grade
+      FROM class c
+      JOIN course co ON c.course_id = co.id
+      LEFT JOIN instructor i ON c.professor_id = i.id
+      ORDER BY c.id
+      `,
+      [studentId],
     );
-    clearTimeout(t);
-  } catch {
-    // Python unreachable — fall back to mock so the page doesn't break.
-    console.warn("[registration/sections] Python unreachable, using mock data");
+
+    const sections: RegistrationSectionDTO[] = rows.map((r) => {
+      const seatsAvailable = Math.max(0, (r.max_num_students ?? 0) - (r.num_students_enrolled ?? 0));
+
+      // Build a readable section ID from course_code + class id
+      const sectionId = `${r.course_code}-${String(r.id).padStart(2, "0")}`;
+
+      // Map time slots
+      const timeSlots = (r.time_slots as { day: string; start_time: string; end_time: string }[]).map((s) => ({
+        day: (DAY_MAP[s.day] ?? s.day) as "Mon" | "Tue" | "Wed" | "Thu" | "Fri",
+        start: toHHMM(s.start_time),
+        end: toHHMM(s.end_time),
+      }));
+
+      // Map enrollment status
+      let initialStatus: RegistrationSectionDTO["initialStatus"] = undefined;
+      if (r.enrollment_status === "ENROLLED" || r.enrollment_status === "WAITLISTED") {
+        initialStatus = r.enrollment_status as "ENROLLED" | "WAITLISTED";
+      }
+
+      // Map previous grade (number 0–4) to letter
+      const previousGrade = numericToLetter(
+        r.previous_grade != null ? Number(r.previous_grade) : null,
+      );
+
+      return {
+        id: `sec_${sectionId}`,
+        classId: r.id as number,
+        enrollmentId: r.enrollment_id != null ? Number(r.enrollment_id) : undefined,
+        sectionId,
+        courseName: r.course_name as string,
+        department: String(r.course_code),   // fallback: use course_code as dept label
+        credits: r.credits as number,
+        instructor: (r.instructor ?? "Staff") as string,
+        timeSlots,
+        seatsAvailable,
+        initialStatus,
+        previousGrade,
+      };
+    });
+
+    return NextResponse.json(sections);
+  } catch (err) {
+    console.error("[registration/sections] DB error:", err);
+    // Fall back to mock so the page doesn't hard-crash
     return NextResponse.json(getMockRegistrationSections());
   }
-
-  const body = await upstream.text();
-  return new NextResponse(body, {
-    status: upstream.status,
-    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
-  });
 }
