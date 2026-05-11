@@ -3,16 +3,10 @@ import { redirect, notFound } from "next/navigation";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import { getSession } from "@/lib/auth/session";
 import type { ClassRosterDTO } from "@/lib/instructor/types";
+import RosterClientTable from "@/components/instructor/RosterClientTable";
 
 export const metadata = { title: "Class Roster — CUNYzero" };
 
-const GRADE_COLORS: Record<string, string> = {
-  A: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  B: "border-sky-200 bg-sky-50 text-sky-800",
-  C: "border-amber-200 bg-amber-50 text-amber-800",
-  D: "border-orange-200 bg-orange-50 text-orange-800",
-  F: "border-red-200 bg-red-50 text-red-800",
-};
 
 function fmtSlots(slots: ClassRosterDTO["time_slots"]) {
   return slots.map((s) => `${s.day} ${s.start}–${s.end}`).join(" · ");
@@ -88,56 +82,7 @@ export default async function ClassRosterPage({
               </div>
             )}
 
-            {/* Roster table */}
-            {roster && (
-              <div className="mt-6 rounded-2xl bg-white border border-black/5 shadow-sm p-6">
-                <div className="text-sm font-semibold text-slate-900 mb-4">
-                  Enrolled Students ({totalStudents})
-                </div>
-
-                {totalStudents === 0 ? (
-                  <div className="rounded-2xl bg-slate-50 border border-slate-100 p-10 text-center text-slate-500 text-sm">
-                    No students enrolled.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-xs text-slate-500 border-b border-slate-100">
-                          <th className="pb-3 pr-4 font-semibold">Student</th>
-                          <th className="pb-3 pr-4 font-semibold">Email</th>
-                          <th className="pb-3 pr-4 font-semibold">ID</th>
-                          <th className="pb-3 font-semibold">Grade</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {roster.students.map((s) => (
-                          <tr key={s.enrollment_id} className="text-slate-700">
-                            <td className="py-3 pr-4 font-medium text-slate-900">{s.student_name}</td>
-                            <td className="py-3 pr-4 text-slate-500">{s.email}</td>
-                            <td className="py-3 pr-4 text-slate-400 text-xs font-mono">{s.student_id}</td>
-                            <td className="py-3">
-                              {s.grade ? (
-                                <span
-                                  className={[
-                                    "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
-                                    GRADE_COLORS[s.grade] ?? "border-slate-200 bg-slate-50 text-slate-800",
-                                  ].join(" ")}
-                                >
-                                  {s.grade}
-                                </span>
-                              ) : (
-                                <span className="text-xs text-slate-400 italic">Pending</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+            {roster && <RosterClientTable roster={roster} />}
           </>
         }
       />
