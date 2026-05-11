@@ -52,7 +52,8 @@ CREATE TABLE "public"."student" (
     "password_hash" varchar(255) NOT NULL,
     "name" varchar(255) NOT NULL,
     "gpa" numeric,
-    "major_id" int REFERENCES "public"."major"("id")
+    "major_id" int REFERENCES "public"."major"("id"),
+    "applied_for_grad" boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE "public"."course" (

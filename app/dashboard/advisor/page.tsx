@@ -216,7 +216,7 @@ function AdvisorView({ profile }: { profile: AdvisorProfileDTO }) {
           />
         </div>
         <div className="mt-1 flex justify-between text-xs opacity-70">
-          <span>0 courses</span>
+          <span>{profile.courses_completed} courses</span>
           <span>8 required for graduation</span>
         </div>
       </div>

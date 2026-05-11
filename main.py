@@ -213,43 +213,52 @@ def get_student_grades(student_id: Optional[str] = None, db: Session = Depends(g
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
         WHERE e.student_id = :sid
+          AND e.status IN ('ENROLLED', 'COMPLETED')
     """)
-    
+
     rows = db.execute(query, {"sid": uid}).fetchall()
     
     if not rows:
         return {"semesters": [], "cumulative_gpa": 0.0}
     
-    def get_letter_grade(val):
-        if val is None: return "Pending"
-        if val >= 4.0: return "A"
-        if val >= 3.0: return "B"
-        if val >= 2.0: return "C"
-        if val >= 1.0: return "D"
+    def pct_to_letter(val):
+        if val is None: return None
+        if val >= 90: return "A"
+        if val >= 80: return "B"
+        if val >= 70: return "C"
+        if val >= 60: return "D"
         return "F"
+
+    def pct_to_points(val):
+        if val is None: return None
+        if val >= 90: return 4.0
+        if val >= 80: return 3.0
+        if val >= 70: return 2.0
+        if val >= 60: return 1.0
+        return 0.0
 
     courses = []
     total_points = 0
     total_credits = 0
 
     for r in rows:
-     
-        num_grade = float(r._mapping['number_grade']) if r._mapping['number_grade'] else None
-        letter_grade = get_letter_grade(num_grade)
+        num_grade = float(r._mapping['number_grade']) if r._mapping['number_grade'] is not None else None
+        letter_grade = pct_to_letter(num_grade)
+        grade_pts = pct_to_points(num_grade)
         credits = r._mapping['credits']
-        
+
         courses.append({
             "course_code": r._mapping['course_code'],
-            "course_name": r._mapping['course_name'], 
-            "section_id": str(r._mapping['section_id']).zfill(2), 
+            "course_name": r._mapping['course_name'],
+            "section_id": str(r._mapping['section_id']).zfill(2),
             "credits": credits,
             "grade": letter_grade,
             "instructor": r._mapping['instructor'] or "Staff",
-            "grade_points": num_grade
+            "grade_points": grade_pts,
         })
 
-        if num_grade is not None:
-            total_points += (num_grade * credits)
+        if grade_pts is not None:
+            total_points += grade_pts * credits
             total_credits += credits
 
     gpa = round(total_points / total_credits, 2) if total_credits > 0 else 0.0
@@ -405,11 +414,12 @@ def apply_for_graduation(data: dict, db: Session = Depends(get_db)):
     
     
     completed = db.execute(text("""
-    SELECT COUNT(*) FROM enrollment 
-    WHERE student_id = :sid 
-    AND number_grade IS NOT NULL 
-    AND number_grade > 0
-"""), {"sid": sid}).scalar() or 0
+        SELECT COUNT(*) FROM enrollment
+        WHERE student_id = :sid
+        AND status IN ('ENROLLED', 'COMPLETED')
+        AND number_grade IS NOT NULL
+        AND number_grade >= 60
+    """), {"sid": sid}).scalar() or 0
     
     eligible, reason = verify_graduation(completed, 3.0)
     
@@ -466,16 +476,19 @@ def get_graduation_status(student_id: Optional[str] = None, db: Session = Depend
         sid = 1
     
     count_query = text("""
-        SELECT COUNT(*) FROM enrollment 
-        WHERE student_id = :sid 
-        AND status = 'ENROLLED' 
-        AND number_grade IS NOT NULL 
-        AND number_grade > 0
+        SELECT COUNT(*) FROM enrollment
+        WHERE student_id = :sid
+        AND status IN ('ENROLLED', 'COMPLETED')
+        AND number_grade IS NOT NULL
+        AND number_grade >= 60
     """)
     completed = db.execute(count_query, {"sid": sid}).scalar() or 0
     
-    status_query = text("SELECT applied_for_grad FROM student WHERE id = :sid")
-    already_applied = db.execute(status_query, {"sid": sid}).scalar() or False
+    try:
+        status_query = text("SELECT applied_for_grad FROM student WHERE id = :sid")
+        already_applied = bool(db.execute(status_query, {"sid": sid}).scalar())
+    except Exception:
+        already_applied = False
 
     # Logic engine check
     eligible, _ = verify_graduation(completed, 3.0) 
@@ -502,13 +515,104 @@ def get_sections(student_id: Optional[str] = None, db: Session = Depends(get_db)
 
 @app.get("/advisor/profile")
 def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-   
+    try:
+        sid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        sid = 1
+
+    # Grades + completed courses (same query as /grades/student)
+    rows = db.execute(text("""
+        SELECT co.course_code, co.name AS course_name, e.number_grade, co.credits,
+               cl.id AS section_id, i.name AS instructor
+        FROM enrollment e
+        JOIN class cl ON e.class_id = cl.id
+        JOIN course co ON cl.course_id = co.id
+        LEFT JOIN instructor i ON cl.professor_id = i.id
+        WHERE e.student_id = :sid AND e.status != 'DROPPED'
+    """), {"sid": sid}).fetchall()
+
+    def pct_to_letter(val):
+        if val is None: return None
+        if val >= 90: return "A"
+        if val >= 80: return "B"
+        if val >= 70: return "C"
+        if val >= 60: return "D"
+        return "F"
+
+    def pct_to_points(val):
+        if val is None: return None
+        if val >= 90: return 4.0
+        if val >= 80: return 3.0
+        if val >= 70: return 2.0
+        if val >= 60: return 1.0
+        return 0.0
+
+    courses = []
+    total_points = 0
+    total_credits = 0
+    for r in rows:
+        m = r._mapping
+        num = float(m["number_grade"]) if m["number_grade"] is not None else None
+        grade_pts = pct_to_points(num)
+        credits = m["credits"]
+        courses.append({
+            "course_code": str(m["course_code"]),
+            "course_name": m["course_name"],
+            "section_id": str(m["section_id"]).zfill(2),
+            "credits": credits,
+            "grade": pct_to_letter(num),
+            "grade_points": grade_pts,
+            "instructor": m["instructor"] or "Staff",
+        })
+        if grade_pts is not None:
+            total_points += grade_pts * credits
+            total_credits += credits
+
+    gpa = round(total_points / total_credits, 2) if total_credits > 0 else None
+    courses_completed = len([c for c in courses if c["grade"] is not None])
+
+    # Current enrollments
+    current_rows = db.execute(text("""
+        SELECT co.name AS course_name, cl.id AS section_id,
+               i.name AS instructor, co.credits
+        FROM enrollment e
+        JOIN class cl ON e.class_id = cl.id
+        JOIN course co ON cl.course_id = co.id
+        LEFT JOIN instructor i ON cl.professor_id = i.id
+        WHERE e.student_id = :sid AND e.status = 'ENROLLED'
+    """), {"sid": sid}).fetchall()
+
+    current_enrollments = [
+        {
+            "course_name": r._mapping["course_name"],
+            "section_id": str(r._mapping["section_id"]).zfill(2),
+            "instructor": r._mapping["instructor"] or "Staff",
+            "credits": r._mapping["credits"],
+        }
+        for r in current_rows
+    ]
+
+    # Warning count
+    warning_count = db.execute(
+        text("SELECT COUNT(*) FROM warning WHERE user_id = :sid AND cleared = false"),
+        {"sid": sid}
+    ).scalar() or 0
+
     return {
-        "advisor_name": "Dr. Saptarashmi Bandyopadhyay",
-        "department": "Computer Science",
-        "office_hours": "Mon/Wed 2:00 PM - 4:00 PM",
-        "email": "sbandyopadhyay@ccny.cuny.edu",
-        "appointment_link": "https://calendly.com/advisor-meet"
+        "student_id": str(sid),
+        "cumulative_gpa": gpa,
+        "warning_count": int(warning_count),
+        "honor_roll": gpa is not None and gpa >= 3.5,
+        "courses_completed": courses_completed,
+        "current_enrollments": current_enrollments,
+        "semesters": [
+            {
+                "semester": "Spring",
+                "year": 2026,
+                "semester_gpa": gpa,
+                "courses": courses,
+            }
+        ],
     }
 
 @app.get("/registration/enrollments")

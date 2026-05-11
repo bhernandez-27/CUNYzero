@@ -56,6 +56,7 @@ export async function GET() {
       JOIN course co ON c.course_id  = co.id
       LEFT JOIN instructor i ON c.professor_id = i.id
       WHERE e.student_id = $1
+        AND e.status != 'DROPPED'
       ORDER BY co.name
       `,
       [studentId],
