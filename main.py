@@ -1,6 +1,7 @@
 import datetime
 from pyexpat.errors import messages
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine, text
 from pydantic import BaseModel
 from sqlalchemy.orm import sessionmaker, Session
@@ -309,13 +310,6 @@ def fetch_user_enrollments(student_id: int, db: Session):
         } for r in rows
     ]
 
-@app.get("/api/registration/drop")
-def get_drop_list(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    try:
-        uid = int(student_id) if student_id else 1
-    except (ValueError, TypeError):
-        uid = 1
-    return fetch_user_enrollments(uid, db)
 
 @app.post("/registration/drop")
 def drop_course(data: DropRequest, db: Session = Depends(get_db)):
@@ -468,6 +462,68 @@ def get_student_warnings(student_id: Optional[str] = None, db: Session = Depends
         ]
     }
 
+class ComplaintRequest(BaseModel):
+    complainant_id: str
+    complainant_role: str
+    subject_type: str
+    subject_id: str
+    description: str
+
+@app.post("/complaints")
+def file_complaint(data: ComplaintRequest, db: Session = Depends(get_db)):
+    try:
+        complainant_uid = int(data.complainant_id)
+    except (ValueError, TypeError):
+        complainant_uid = 1
+
+    # Resolve subject to a college0_user id — accept numeric ID or name lookup
+    subject_uid = None
+    raw = data.subject_id.strip()
+
+    try:
+        candidate = int(raw)
+        # Verify the ID actually exists in college0_user (guards against out-of-range and fake IDs)
+        exists = db.execute(
+            text("SELECT 1 FROM college0_user WHERE id = :id"),
+            {"id": candidate}
+        ).fetchone()
+        if exists:
+            subject_uid = candidate
+    except (ValueError, TypeError):
+        pass
+
+    if subject_uid is None:
+        # Try name lookup in student or instructor table
+        table = "student" if data.subject_type == "student" else "instructor"
+        row = db.execute(
+            text(f"SELECT id FROM {table} WHERE LOWER(name) = LOWER(:name)"),
+            {"name": raw}
+        ).fetchone()
+        if row:
+            subject_uid = row[0]
+
+    if subject_uid is None:
+        return JSONResponse(
+            {"error": "not_found", "message": f"Could not find {data.subject_type} '{raw}'. Enter their exact name or a valid ID number."},
+            status_code=400
+        )
+
+    description = data.description.strip()[:255]
+
+    result = db.execute(
+        text("""
+            INSERT INTO complaint (complaining_user_id, complained_user_id, description)
+            VALUES (:from_id, :to_id, :desc)
+            RETURNING id
+        """),
+        {"from_id": complainant_uid, "to_id": subject_uid, "desc": description}
+    )
+    complaint_id = result.fetchone()[0]
+    db.commit()
+
+    return JSONResponse({"complaint_id": f"CMP-{complaint_id}", "status": "submitted"}, status_code=201)
+
+
 @app.get("/graduation/status")
 def get_graduation_status(student_id: Optional[str] = None, db: Session = Depends(get_db)):
     try:
@@ -615,13 +671,6 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
         ],
     }
 
-@app.get("/registration/enrollments")
-def get_registration_enrollments(student_id: Optional[str] = None, db: Session = Depends(get_db)):
-    try:
-        uid = int(student_id) if student_id else 1
-    except (ValueError, TypeError):
-        uid = 1
-    return fetch_user_enrollments(uid, db)
 
 
 class ConfirmRegistrationRequest(BaseModel):
