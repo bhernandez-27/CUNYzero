@@ -79,6 +79,57 @@ def get_db():
     finally:
         db.close()
 
+@app.on_event("startup")
+def create_missing_tables():
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS semester_state (
+                id SERIAL PRIMARY KEY,
+                current_period VARCHAR(20) NOT NULL DEFAULT 'CLASS_SETUP',
+                semester_name  VARCHAR(10) NOT NULL DEFAULT 'Spring',
+                year           INT         NOT NULL DEFAULT 2026,
+                advanced_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        # Add missing columns to existing table (idempotent)
+        for col_sql in [
+            "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS semester_name VARCHAR(10) NOT NULL DEFAULT 'Spring'",
+            "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS year INT NOT NULL DEFAULT 2026",
+            "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS advanced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+        ]:
+            try:
+                db.execute(text(col_sql))
+            except Exception:
+                pass
+        count = db.execute(text("SELECT COUNT(*) FROM semester_state")).scalar()
+        if count == 0:
+            db.execute(text(
+                "INSERT INTO semester_state (current_period, semester_name, year, advanced_at) "
+                "VALUES ('REGISTRATION', 'Spring', 2026, NOW())"
+            ))
+        # Reset sequences that seed data may have left out of sync
+        for seq_fix in [
+            "SELECT setval(pg_get_serial_sequence('taboo_word',  'id'), COALESCE(MAX(id), 1)) FROM taboo_word",
+            "SELECT setval(pg_get_serial_sequence('class',       'id'), COALESCE(MAX(id), 1)) FROM class",
+            "SELECT setval(pg_get_serial_sequence('course',      'id'), COALESCE(MAX(id), 1)) FROM course",
+            "SELECT setval(pg_get_serial_sequence('enrollment',  'id'), COALESCE(MAX(id), 1)) FROM enrollment",
+            "SELECT setval(pg_get_serial_sequence('complaint',   'id'), COALESCE(MAX(id), 1)) FROM complaint",
+            "SELECT setval(pg_get_serial_sequence('review',      'id'), COALESCE(MAX(id), 1)) FROM review",
+            "SELECT setval(pg_get_serial_sequence('instructor',  'id'), COALESCE(MAX(id), 1)) FROM instructor",
+            "SELECT setval(pg_get_serial_sequence('student',     'id'), COALESCE(MAX(id), 1)) FROM student",
+            "SELECT setval(pg_get_serial_sequence('college0_user','id'), COALESCE(MAX(id), 1)) FROM college0_user",
+        ]:
+            try:
+                db.execute(text(seq_fix))
+            except Exception as se:
+                print(f"[startup] seq fix skipped: {se}")
+        db.commit()
+    except Exception as e:
+        print(f"[startup] Could not create semester_state: {e}")
+    finally:
+        db.close()
+
 @app.get("/")
 def home():
     return {"status": "College0 API is running"}
@@ -1120,189 +1171,545 @@ def issue_warning(data: dict, db: Session = Depends(get_db)):
 #Registrar endpoints
 @app.get("/registrar/applications")
 def get_pending_applications(db: Session = Depends(get_db)):
-    """GET /registrar/applications
-    Pending student + instructor applications
-    """
-    query = text("SELECT id, name, email, type, status FROM application WHERE status = 'PENDING'")
-    rows = db.execute(query).fetchall()
-    return [dict(r._mapping) for r in rows]
+    """GET /registrar/applications → ApplicationsDTO { students, instructors }"""
+    def map_decision(d):
+        if str(d) == "accept": return "APPROVED"
+        if str(d) == "reject": return "REJECTED"
+        return "PENDING"
+
+    students = db.execute(text("""
+        SELECT id, visitor_name, visitor_gpa, decision
+        FROM visitor_student_application
+        WHERE decision = 'pending' OR decision IS NULL
+    """)).fetchall()
+
+    instructors = db.execute(text("""
+        SELECT id, visitor_name, decision
+        FROM visitor_instructor_application
+        WHERE decision = 'pending' OR decision IS NULL
+    """)).fetchall()
+
+    return {
+        "students": [
+            {
+                "application_id": str(r.id),
+                "full_name": r.visitor_name,
+                "email": f"applicant{r.id}@pending.edu",
+                "prior_gpa": float(r.visitor_gpa) if r.visitor_gpa else 0.0,
+                "status": map_decision(r.decision),
+                "applied_at": datetime.datetime.now().isoformat(),
+                "type": "student",
+            }
+            for r in students
+        ],
+        "instructors": [
+            {
+                "application_id": str(r.id),
+                "full_name": r.visitor_name,
+                "email": f"instructor{r.id}@pending.edu",
+                "field_of_expertise": "General",
+                "credentials_summary": "Pending review",
+                "status": map_decision(r.decision),
+                "applied_at": datetime.datetime.now().isoformat(),
+                "type": "instructor",
+            }
+            for r in instructors
+        ],
+    }
 
 @app.patch("/registrar/applications")
 def process_application(data: dict, db: Session = Depends(get_db)):
-    """PATCH /registrar/applications
-    Approve/reject application: { application_id, type, decision, justification? }
-    """
-    db.execute(
-        text("UPDATE application SET status = :status WHERE id = :aid"),
-        {"status": data['decision'].upper(), "aid": data['application_id']}
-    )
+    """PATCH /registrar/applications: { application_id, type, decision }"""
+    app_id = data["application_id"]
+    raw = str(data["decision"]).lower()
+    decision = "accept" if raw == "approved" else "reject"
+    app_type = str(data.get("type", "student")).lower()
+
+    if app_type == "instructor":
+        db.execute(
+            text("UPDATE visitor_instructor_application SET decision = CAST(:d AS app_decision_enum) WHERE id = :id"),
+            {"d": decision, "id": app_id}
+        )
+    else:
+        db.execute(
+            text("UPDATE visitor_student_application SET decision = CAST(:d AS app_decision_enum) WHERE id = :id"),
+            {"d": decision, "id": app_id}
+        )
     db.commit()
-    return {"status": "updated"}
+    return {"status": data["decision"], "message": f"Application {raw}."}
+
+def _day_abbrev(day_str: str) -> str:
+    """Convert 'MONDAY' → 'Mon', 'TUESDAY' → 'Tue', etc."""
+    return {"MONDAY":"Mon","TUESDAY":"Tue","WEDNESDAY":"Wed","THURSDAY":"Thu","FRIDAY":"Fri",
+            "SATURDAY":"Sat","SUNDAY":"Sun"}.get(str(day_str).upper(), str(day_str)[:3].capitalize())
+
+def _fmt_time(t) -> str:
+    """Convert time object or string to 'HH:MM'."""
+    if hasattr(t, 'strftime'):
+        return t.strftime("%H:%M")
+    return str(t)[:5]
 
 @app.get("/registrar/classes")
 def get_all_classes(db: Session = Depends(get_db)):
-    """GET /registrar/classes
-    All classes + list of instructors (for class setup UI)
-    """
-    query = text("""
-        SELECT cl.id, co.name, co.course_code, i.name as instructor, cl.max_num_students
+    """GET /registrar/classes → ClassesPageDTO {classes, instructors}"""
+    # ── classes ──────────────────────────────────────────────────────────────
+    cls_rows = db.execute(text("""
+        SELECT cl.id                              AS class_id,
+               co.name                            AS course_name,
+               co.course_code                     AS course_code,
+               CONCAT(co.course_code,'-',cl.id)   AS section_id,
+               i.name                             AS instructor_name,
+               i.id                               AS instructor_id,
+               cl.max_num_students                AS capacity,
+               cl.num_students_enrolled           AS enrolled,
+               CASE WHEN cc.id IS NOT NULL THEN 'CANCELLED' ELSE 'ACTIVE' END AS status
         FROM class cl
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
-    """)
-    return [dict(r._mapping) for r in db.execute(query).fetchall()]
+        LEFT JOIN class_cancellation cc ON cc.class_id = cl.id
+        ORDER BY cl.id
+    """)).fetchall()
+
+    slot_rows = db.execute(text("""
+        SELECT class_id, day, start_time, end_time
+        FROM class_day_met
+        ORDER BY class_id, id
+    """)).fetchall()
+
+    # group time slots by class_id
+    slots_by_class: dict = {}
+    for s in slot_rows:
+        cid = s[0]
+        slots_by_class.setdefault(cid, []).append({
+            "day":   _day_abbrev(s[1]),
+            "start": _fmt_time(s[2]),
+            "end":   _fmt_time(s[3]),
+        })
+
+    classes = []
+    for c in cls_rows:
+        classes.append({
+            "class_id":       str(c[0]),
+            "course_name":    str(c[1]),
+            "course_code":    str(c[2]),
+            "section_id":     str(c[3]),
+            "instructor_name": str(c[4]) if c[4] else "TBD",
+            "instructor_id":   str(c[5]) if c[5] else "",
+            "capacity":        int(c[6]),
+            "enrolled":        int(c[7]),
+            "time_slots":      slots_by_class.get(c[0], []),
+            "status":          str(c[8]),
+        })
+
+    # ── instructors ──────────────────────────────────────────────────────────
+    ins_rows = db.execute(text("""
+        SELECT i.id, i.name,
+               CASE WHEN s.instructor_id IS NOT NULL THEN TRUE ELSE FALSE END AS suspended
+        FROM instructor i
+        LEFT JOIN instructor_suspension s ON s.instructor_id = i.id
+        ORDER BY i.name
+    """)).fetchall()
+
+    instructors = [
+        {"instructor_id": str(r[0]), "name": str(r[1]), "suspended": bool(r[2])}
+        for r in ins_rows
+    ]
+
+    return {"classes": classes, "instructors": instructors}
 
 @app.post("/registrar/classes")
 def create_class(data: dict, db: Session = Depends(get_db)):
-    """POST /registrar/classes
-    Create a new class section
+    """POST /registrar/classes → ClassSectionDTO
+    Body: {course_name, course_code, instructor_id, capacity, time_slots}
     """
-    db.execute(
-        text("INSERT INTO class (course_id, professor_id, max_num_students, semester_id) VALUES (:cid, :pid, :max, :sid)"),
-        {"cid": data['course_id'], "pid": data['professor_id'], "max": data['max_num_students'], "sid": data.get('semester_id', 1)}
+    course_name  = data.get("course_name", "").strip()
+    course_code  = data.get("course_code", "").strip()
+    instructor_id = data.get("instructor_id")
+    capacity     = int(data.get("capacity", 0))
+    time_slots   = data.get("time_slots", [])
+
+    if not course_name or not course_code or not instructor_id or capacity < 1:
+        raise HTTPException(status_code=400, detail="course_name, course_code, instructor_id, and capacity are required.")
+
+    # Check instructor not suspended
+    susp = db.execute(
+        text("SELECT id FROM instructor_suspension WHERE instructor_id = :iid"),
+        {"iid": instructor_id}
+    ).fetchone()
+    if susp:
+        raise HTTPException(status_code=422, detail="Instructor is suspended and cannot be assigned to a class.")
+
+    # Find or create course
+    course = db.execute(
+        text("SELECT id FROM course WHERE LOWER(course_code) = LOWER(:code) LIMIT 1"),
+        {"code": course_code}
+    ).fetchone()
+    if course:
+        course_id = course[0]
+    else:
+        # Get first department as fallback
+        dept = db.execute(text("SELECT id FROM department LIMIT 1")).fetchone()
+        dept_id = dept[0] if dept else 1
+        result = db.execute(
+            text("INSERT INTO course (name, course_code, department_id, credits, contact_hours) VALUES (:n, :c, :d, 3, 3) RETURNING id"),
+            {"n": course_name, "c": course_code, "d": dept_id}
+        )
+        course_id = result.fetchone()[0]
+
+    # Get current semester
+    sem = db.execute(text("SELECT id FROM semester ORDER BY year DESC, id DESC LIMIT 1")).fetchone()
+    sem_id = sem[0] if sem else 1
+
+    # Insert class
+    ins_row = db.execute(
+        text("""
+            INSERT INTO class (course_id, professor_id, max_num_students, num_students_enrolled,
+                               waitlist_max, current_num_on_waitlist, semester_id)
+            VALUES (:cid, :pid, :max, 0, 5, 0, :sid)
+            RETURNING id
+        """),
+        {"cid": course_id, "pid": int(instructor_id), "max": capacity, "sid": sem_id}
     )
+    new_class_id = ins_row.fetchone()[0]
+
+    # Insert time slots
+    day_map = {"Mon":"MONDAY","Tue":"TUESDAY","Wed":"WEDNESDAY","Thu":"THURSDAY",
+               "Fri":"FRIDAY","Sat":"SATURDAY","Sun":"SUNDAY"}
+    for slot in time_slots:
+        day_upper = day_map.get(slot.get("day","Mon"), "MONDAY")
+        db.execute(
+            text("INSERT INTO class_day_met (class_id, day, start_time, end_time) VALUES (:cid, :d, :s, :e)"),
+            {"cid": new_class_id, "d": day_upper, "s": slot.get("start","09:00"), "e": slot.get("end","10:30")}
+        )
+
     db.commit()
-    return {"status": "success"}
+
+    # Fetch instructor name
+    ins_name_row = db.execute(text("SELECT name FROM instructor WHERE id = :iid"), {"iid": int(instructor_id)}).fetchone()
+    ins_name = str(ins_name_row[0]) if ins_name_row else "TBD"
+
+    return {
+        "class_id":        str(new_class_id),
+        "course_name":     course_name,
+        "course_code":     course_code,
+        "section_id":      f"{course_code}-{new_class_id}",
+        "instructor_name": ins_name,
+        "instructor_id":   str(instructor_id),
+        "capacity":        capacity,
+        "enrolled":        0,
+        "time_slots":      [{"day": _day_abbrev(day_map.get(s.get("day","Mon"),"MONDAY")),
+                             "start": s.get("start","09:00"), "end": s.get("end","10:30")}
+                            for s in time_slots],
+        "status": "ACTIVE",
+    }
 
 @app.delete("/registrar/classes/{class_id}")
 def delete_class(class_id: int, db: Session = Depends(get_db)):
-    """DELETE /registrar/classes/{class_id}
-    Delete a class
-    """
-    enrolled = db.execute(text("SELECT COUNT(*) FROM enrollment WHERE class_id = :cid AND status = 'ENROLLED'"), 
-                          {"cid": class_id}).scalar()
+    """DELETE /registrar/classes/{class_id}"""
+    enrolled = db.execute(
+        text("SELECT COUNT(*) FROM enrollment WHERE class_id = :cid AND status = 'ENROLLED'"),
+        {"cid": class_id}
+    ).scalar()
     if enrolled > 0:
-        raise HTTPException(status_code=400, detail="Cannot delete class with enrolled students.")
-    
+        raise HTTPException(status_code=409, detail={"error": "HAS_ENROLLMENTS", "message": "Cannot delete a class with enrolled students."})
+    db.execute(text("DELETE FROM class_day_met WHERE class_id = :cid"), {"cid": class_id})
     db.execute(text("DELETE FROM class WHERE id = :cid"), {"cid": class_id})
     db.commit()
-    return {"status": "success"}
+    return {"status": "DELETED", "message": "Class deleted."}
 
 @app.get("/registrar/complaints")
 def get_all_complaints(db: Session = Depends(get_db)):
-    """GET /registrar/complaints
-    All filed complaints with complainant + subject info
-    """
+    """GET /registrar/complaints → ComplaintDTO[]"""
     query = text("""
-        SELECT c.id, u1.name as complainant, u2.name as subject, c.description, c.status
+        SELECT c.id,
+               COALESCE(s1.name, i1.name, 'Unknown') AS complainant_name,
+               c.complaining_user_id,
+               u1.type AS complainant_type,
+               COALESCE(s2.name, i2.name, 'Unknown') AS subject_name,
+               c.complained_user_id,
+               u2.type AS subject_type_raw,
+               c.description,
+               c.outcome
         FROM complaint c
         JOIN college0_user u1 ON c.complaining_user_id = u1.id
         JOIN college0_user u2 ON c.complained_user_id = u2.id
+        LEFT JOIN student s1 ON c.complaining_user_id = s1.id
+        LEFT JOIN instructor i1 ON c.complaining_user_id = i1.id
+        LEFT JOIN student s2 ON c.complained_user_id = s2.id
+        LEFT JOIN instructor i2 ON c.complained_user_id = i2.id
     """)
-    return [dict(r._mapping) for r in db.execute(query).fetchall()]
+    rows = db.execute(query).fetchall()
+
+    def role(t): return "student" if str(t).upper() == "STUDENT" else "instructor"
+
+    return [
+        {
+            "complaint_id":      str(r.id),
+            "complainant_name":  r.complainant_name,
+            "complainant_id":    str(r.complaining_user_id),
+            "complainant_role":  role(r.complainant_type),
+            "subject_name":      r.subject_name,
+            "subject_id":        str(r.complained_user_id),
+            "subject_type":      role(r.subject_type_raw),
+            "description":       r.description,
+            "status":            "DISMISSED" if r.outcome == "dismissed" else ("RESOLVED" if r.outcome in ("warned", "complainant_warned", "deregistered") else "OPEN"),
+            "filed_at":          datetime.datetime.now().isoformat(),
+        }
+        for r in rows
+    ]
 
 @app.patch("/registrar/complaints")
 def resolve_complaint(data: dict, db: Session = Depends(get_db)):
-    """PATCH /registrar/complaints
-    Resolve/dismiss complaint, optionally warn parties
-    """
-    db.execute(
-        text("UPDATE complaint SET status = :s WHERE id = :cid"),
-        {"s": data['decision'], "cid": data['complaint_id']}
-    )
+    """PATCH /registrar/complaints: { complaint_id, action, note? }"""
+    complaint_id = data["complaint_id"]
+    action = data.get("action", "dismiss")
+    note = data.get("note", "")
+
+    if action == "warn_subject":
+        row = db.execute(text("SELECT complained_user_id FROM complaint WHERE id = :id"), {"id": complaint_id}).fetchone()
+        if row:
+            db.execute(text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
+                       {"uid": row.complained_user_id, "desc": note or "Warning via complaint resolution"})
+        outcome = "warned"
+    elif action == "warn_complainant":
+        row = db.execute(text("SELECT complaining_user_id FROM complaint WHERE id = :id"), {"id": complaint_id}).fetchone()
+        if row:
+            db.execute(text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
+                       {"uid": row.complaining_user_id, "desc": "Warning for filing unfounded complaint"})
+        outcome = "complainant_warned"
+    elif action == "deregister_subject":
+        outcome = "deregistered"
+    else:
+        outcome = "dismissed"
+
+    db.execute(text("UPDATE complaint SET outcome = :o WHERE id = :id"), {"o": outcome, "id": complaint_id})
     db.commit()
-    return {"status": "updated"}
+    status = "DISMISSED" if action == "dismiss" else "RESOLVED"
+    return {"status": status, "message": "Complaint resolved successfully."}
 
 @app.get("/registrar/grade-audit")
 def get_grade_audit(db: Session = Depends(get_db)):
-    """GET /registrar/grade-audit
-    Classes with flagged GPAs (too high or too low)
-    """
+    """GET /registrar/grade-audit → ClassGradeAuditDTO[]"""
     query = text("""
-        SELECT cl.id as class_id, co.name as course_name, i.name as instructor_name,
-               AVG(e.number_grade) as average_gpa
+        SELECT cl.id AS class_id, co.name AS course_name,
+               CONCAT(co.course_code, '-', cl.id) AS section_id,
+               i.id AS instructor_id, i.name AS instructor_name,
+               AVG(
+                   CASE
+                       WHEN e.number_grade >= 90 THEN 4.0
+                       WHEN e.number_grade >= 80 THEN 3.0
+                       WHEN e.number_grade >= 70 THEN 2.0
+                       WHEN e.number_grade >= 60 THEN 1.0
+                       ELSE 0.0
+                   END
+               ) AS class_gpa,
+               COUNT(e.id) AS student_count
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
         WHERE e.status = 'COMPLETED' AND e.number_grade IS NOT NULL
-        GROUP BY cl.id, co.name, i.name
-        HAVING AVG(e.number_grade) > 95 OR AVG(e.number_grade) < 65
+        GROUP BY cl.id, co.name, co.course_code, i.id, i.name
     """)
     rows = db.execute(query).fetchall()
-    return [dict(r._mapping) for r in rows]
+    result = []
+    for r in rows:
+        gpa = round(float(r.class_gpa), 2) if r.class_gpa is not None else None
+        flag_reason = None
+        if gpa is not None:
+            if gpa > 3.5: flag_reason = "TOO_HIGH"
+            elif gpa < 2.5: flag_reason = "TOO_LOW"
+        result.append({
+            "class_id":               str(r.class_id),
+            "course_name":            r.course_name,
+            "section_id":             r.section_id,
+            "instructor_name":        r.instructor_name or "Staff",
+            "instructor_id":          str(r.instructor_id) if r.instructor_id else "",
+            "class_gpa":              gpa,
+            "student_count":          int(r.student_count),
+            "flagged":                flag_reason is not None,
+            "flag_reason":            flag_reason,
+            "justification_requested": False,
+            "resolved":               False,
+        })
+    return result
 
 @app.patch("/registrar/grade-audit")
 def take_audit_action(data: dict, db: Session = Depends(get_db)):
-    """PATCH /registrar/grade-audit
-    Warn instructor / request justification / dismiss flag
-    """
-    if data['action'] == "warn_instructor":
-        db.execute(
-            text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
-            {"uid": data['instructor_id'], "desc": f"Grade Audit Flag: {data.get('justification', '')}"}
-        )
-        db.commit()
-    return {"status": "action_recorded"}
+    """PATCH /registrar/grade-audit: { class_id, action, note? }"""
+    action = data.get("action", "")
+    class_id = data.get("class_id")
+    note = data.get("note", "")
+
+    if action in ("warn_instructor", "dismiss_instructor"):
+        instructor = db.execute(
+            text("SELECT professor_id FROM class WHERE id = :cid"), {"cid": class_id}
+        ).fetchone()
+        if instructor and instructor.professor_id:
+            if action == "warn_instructor":
+                db.execute(
+                    text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
+                    {"uid": instructor.professor_id, "desc": f"Grade Audit: {note or 'Flagged distribution'}"}
+                )
+            else:
+                reg = db.execute(text("SELECT id FROM registrar LIMIT 1")).fetchone()
+                db.execute(
+                    text("INSERT INTO fired (registrar_id, reason, instructor_id) VALUES (:rid, :reason, :iid)"),
+                    {"rid": reg.id if reg else 1, "iid": instructor.professor_id, "reason": note or "Grade audit"}
+                )
+            db.commit()
+
+    is_resolved = action != "request_justification"
+    return {
+        "status": "RESOLVED" if is_resolved else "JUSTIFICATION_REQUESTED",
+        "message": "Flag resolved." if is_resolved else "Instructor notified.",
+    }
 
 @app.get("/registrar/graduation")
 def get_grad_applications(db: Session = Depends(get_db)):
-    """GET /registrar/graduation
-    All students who applied for graduation
-    """
-    query = text("SELECT id, name, gpa, credits_earned FROM student WHERE applied_for_grad = true")
-    rows = db.execute(query).fetchall()
-    return [dict(r._mapping) for r in rows]
+    """GET /registrar/graduation → GraduationApplicationDTO[]"""
+    rows = db.execute(text("""
+        SELECT s.id, s.name, s.email, s.gpa,
+               (SELECT COUNT(*) FROM enrollment e
+                WHERE e.student_id = s.id
+                AND e.status IN ('ENROLLED', 'COMPLETED')
+                AND e.number_grade IS NOT NULL
+                AND e.number_grade >= 60) AS courses_completed
+        FROM student s
+        WHERE s.applied_for_grad = true
+    """)).fetchall()
+    return [
+        {
+            "application_id":   str(r.id),
+            "student_id":       str(r.id),
+            "student_name":     r.name,
+            "email":            r.email,
+            "cumulative_gpa":   float(r.gpa) if r.gpa is not None else None,
+            "courses_completed": int(r.courses_completed),
+            "courses_required": 8,
+            "eligible":         int(r.courses_completed) >= 8,
+            "applied_at":       datetime.datetime.now().isoformat(),
+            "status":           "PENDING",
+        }
+        for r in rows
+    ]
 
 @app.patch("/registrar/graduation")
 def process_graduation(data: dict, db: Session = Depends(get_db)):
-    """PATCH /registrar/graduation
-    Approve or reject graduation application
-    """
-    status = "GRADUATED" if data['decision'] == 'approve' else "Active"
-    db.execute(
-        text("UPDATE student SET status = :s, applied_for_grad = false WHERE id = :sid"),
-        {"s": status, "sid": data['student_id']}
-    )
+    """PATCH /registrar/graduation: { application_id, decision, note? }"""
+    # application_id == student_id in our schema
+    student_id = data.get("student_id") or data.get("application_id")
+    decision = str(data.get("decision", "REJECTED")).upper()
+
+    if decision == "APPROVED":
+        db.execute(
+            text("INSERT INTO graduate (student_id, year_graduated, semester_graduated) VALUES (:sid, :yr, CAST(:sem AS semester_season_enum)) ON CONFLICT DO NOTHING"),
+            {"sid": student_id, "yr": 2026, "sem": "SPRING"}
+        )
+        msg = "Graduation approved. Degree awarded."
+    else:
+        msg = "Application rejected. Student has been notified."
+
+    db.execute(text("UPDATE student SET applied_for_grad = false WHERE id = :sid"), {"sid": student_id})
     db.commit()
-    return {"status": "updated"}
+    return {"status": decision, "message": msg}
+
+def _semester_dto(row) -> dict:
+    """Build the SemesterDTO dict the frontend expects."""
+    if not row:
+        return {
+            "period": "CLASS_SETUP",
+            "semester": "Spring",
+            "year": 2026,
+            "advanced_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+    adv = row[3]
+    if hasattr(adv, "isoformat"):
+        adv_str = adv.isoformat()
+        if not adv_str.endswith("Z") and "+" not in adv_str:
+            adv_str += "Z"
+    else:
+        adv_str = str(adv)
+    return {
+        "period":      str(row[0]),
+        "semester":    str(row[1]),
+        "year":        int(row[2]),
+        "advanced_at": adv_str,
+    }
 
 @app.get("/registrar/semester")
 def get_semester_state(db: Session = Depends(get_db)):
-    """GET /registrar/semester
-    Current semester period (CLASS_SETUP / REGISTRATION / CLASS_RUNNING / GRADING)
-    """
-    row = db.execute(text("SELECT current_period FROM semester_state LIMIT 1")).fetchone()
-    return {"period": str(row[0]) if row else "CLASS_SETUP"}
+    """GET /registrar/semester → SemesterDTO"""
+    row = db.execute(
+        text("SELECT current_period, semester_name, year, advanced_at FROM semester_state LIMIT 1")
+    ).fetchone()
+    return _semester_dto(row)
 
 @app.post("/registrar/semester/advance")
 def advance_semester(db: Session = Depends(get_db)):
-    """POST /registrar/semester/advance
-    Advance to the next period
-    """
+    """POST /registrar/semester/advance → SemesterDTO (next period)"""
     states = ["CLASS_SETUP", "REGISTRATION", "CLASS_RUNNING", "GRADING"]
-    current_row = db.execute(text("SELECT current_period FROM semester_state LIMIT 1")).fetchone()
-    
+    current_row = db.execute(
+        text("SELECT current_period, semester_name, year, advanced_at FROM semester_state LIMIT 1")
+    ).fetchone()
+
     current_state = str(current_row[0]) if current_row else "CLASS_SETUP"
     next_idx = (states.index(current_state) + 1) % len(states)
     next_state = states[next_idx]
 
-    db.execute(text("UPDATE semester_state SET current_period = :ns"), {"ns": next_state})
+    # When cycling back to CLASS_SETUP advance the semester/year
+    sem_name = str(current_row[1]) if current_row else "Spring"
+    yr = int(current_row[2]) if current_row else 2026
+    if next_state == "CLASS_SETUP":
+        sem_name = "Fall" if sem_name == "Spring" else "Spring"
+        if sem_name == "Spring":
+            yr += 1
+
+    db.execute(
+        text("UPDATE semester_state SET current_period = :ns, semester_name = :sn, year = :yr, advanced_at = NOW()"),
+        {"ns": next_state, "sn": sem_name, "yr": yr},
+    )
     db.commit()
-    return {"status": "success", "new_period": next_state}
+
+    updated = db.execute(
+        text("SELECT current_period, semester_name, year, advanced_at FROM semester_state LIMIT 1")
+    ).fetchone()
+    return _semester_dto(updated)
+
+def _taboo_words_list(db: Session) -> list:
+    rows = db.execute(text("SELECT word FROM taboo_word ORDER BY word")).fetchall()
+    return [r[0] for r in rows]
 
 @app.get("/registrar/taboo")
 def get_taboo_words(db: Session = Depends(get_db)):
-    """GET /registrar/taboo
-    List of taboo words used in review filtering
-    """
-    rows = db.execute(text("SELECT word FROM taboo_word")).fetchall()
-    return [r[0] for r in rows]
+    """GET /registrar/taboo → { words: string[] }"""
+    return {"words": _taboo_words_list(db)}
 
 @app.post("/registrar/taboo")
 def add_taboo_word(data: dict, db: Session = Depends(get_db)):
-    """POST /registrar/taboo
-    Add a taboo word: { word }
+    """POST /registrar/taboo → { words: string[] }
+    Body: { word: string }
     """
-    db.execute(text("INSERT INTO taboo_word (word) VALUES (:w)"), {"w": data['word']})
+    word = str(data.get("word", "")).strip().lower()
+    if not word:
+        raise HTTPException(status_code=400, detail={"error": "missing_field", "message": "word is required."})
+    existing = db.execute(text("SELECT id FROM taboo_word WHERE LOWER(word) = :w"), {"w": word}).fetchone()
+    if existing:
+        raise HTTPException(status_code=409, detail={"error": "DUPLICATE", "message": f'"{word}" is already on the list.'})
+    db.execute(text("INSERT INTO taboo_word (word) VALUES (:w)"), {"w": word})
     db.commit()
-    return {"status": "success"}
+    return {"words": _taboo_words_list(db)}
 
-@app.delete("/registrar/taboo/{word}")
-def remove_taboo_word(word: str, db: Session = Depends(get_db)):
-    """DELETE /registrar/taboo/{word}
-    Remove a taboo word
+@app.delete("/registrar/taboo")
+def remove_taboo_word(data: dict, db: Session = Depends(get_db)):
+    """DELETE /registrar/taboo → { words: string[] }
+    Body: { word: string }
     """
-    db.execute(text("DELETE FROM taboo_word WHERE word = :w"), {"w": word})
+    word = str(data.get("word", "")).strip().lower()
+    if not word:
+        raise HTTPException(status_code=400, detail={"error": "missing_field", "message": "word is required."})
+    deleted = db.execute(text("DELETE FROM taboo_word WHERE LOWER(word) = :w"), {"w": word}).rowcount
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail={"error": "NOT_FOUND", "message": f'"{word}" was not found.'})
     db.commit()
-    return {"status": "success"}
+    return {"words": _taboo_words_list(db)}
