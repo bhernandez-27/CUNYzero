@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import ChatPanel from "@/components/ai/ChatPanel";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import { getSession } from "@/lib/auth/session";
@@ -88,9 +89,12 @@ export default async function DashboardPage() {
   const fullName = session?.name ?? "Student";
   const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
 
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
+
   const [classesResult, statusResult] = await Promise.allSettled([
-    fetch(`${baseUrl}/api/class/top`, { cache: "no-store" }),
-    fetch(`${baseUrl}/api/student/status`, { cache: "no-store" }),
+    fetch(`${baseUrl}/api/class/top`, { cache: "no-store", headers: { cookie: cookieHeader } }),
+    fetch(`${baseUrl}/api/student/status`, { cache: "no-store", headers: { cookie: cookieHeader } }),
   ]);
 
   let classes: ClassSummary[] = [];

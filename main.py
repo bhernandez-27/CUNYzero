@@ -999,29 +999,55 @@ def get_roster(class_id: int, db: Session = Depends(get_db)):
 def submit_grades(data: dict, db: Session = Depends(get_db)):
     """POST /instructor/grades
     Submits grades batch: { class_id, grades: [{enrollment_id, grade}] }
+    grade is a letter (A/B/C/D/F) — stored as numeric midpoint.
     """
+    letter_to_number = {"A": 95, "B": 85, "C": 75, "D": 65, "F": 50}
+    count = 0
     for entry in data.get("grades", []):
+        numeric = letter_to_number.get(str(entry.get("grade", "")).upper())
+        if numeric is None:
+            continue
         db.execute(
             text("UPDATE enrollment SET number_grade = :g, status = 'COMPLETED' WHERE id = :eid"),
-            {"g": entry["grade"], "eid": entry["enrollment_id"]}
+            {"g": numeric, "eid": entry["enrollment_id"]}
         )
+        count += 1
     db.commit()
-    return {"status": "success", "message": "Grades updated successfully"}
+    return {"status": "OK", "graded_count": count, "message": f"{count} grade(s) submitted successfully."}
 
 @app.get("/instructor/waitlist/{class_id}")
 def get_class_waitlist(class_id: int, db: Session = Depends(get_db)):
     """GET /instructor/waitlist/{classId}
-    Returns waitlisted students for a class
+    Returns WaitlistStudentDTO[] for waitlisted students in a class.
     """
+    cls = db.execute(text("""
+        SELECT co.name AS course_name, CONCAT(co.course_code, '-', cl.id) AS section_id
+        FROM class cl JOIN course co ON cl.course_id = co.id
+        WHERE cl.id = :cid
+    """), {"cid": class_id}).fetchone()
+
     query = text("""
-        SELECT e.id as waitlist_id, s.name, s.email, e.enrolled_at_timestamp
+        SELECT e.id AS waitlist_id, s.id AS student_id, s.name AS student_name,
+               s.email, e.enrolled_at_timestamp AS joined_at
         FROM enrollment e
         JOIN student s ON e.student_id = s.id
         WHERE e.class_id = :cid AND e.status = 'WAITLISTED'
         ORDER BY e.enrolled_at_timestamp ASC
     """)
     rows = db.execute(query, {"cid": class_id}).fetchall()
-    return [dict(r._mapping) for r in rows]
+    return [
+        {
+            "waitlist_id":  str(r.waitlist_id),
+            "student_id":   str(r.student_id),
+            "student_name": r.student_name,
+            "email":        r.email,
+            "joined_at":    r.joined_at.isoformat() if r.joined_at else None,
+            "class_id":     str(class_id),
+            "course_name":  cls.course_name if cls else "",
+            "section_id":   cls.section_id if cls else "",
+        }
+        for r in rows
+    ]
 
 @app.patch("/instructor/waitlist/{class_id}")
 def handle_waitlist_action(class_id: int, data: dict, db: Session = Depends(get_db)):
