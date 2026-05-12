@@ -9,6 +9,16 @@ from sqlalchemy.orm import sessionmaker, Session
 from logic_engine import process_review, check_overlap, verify_graduation
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
+import bcrypt as _bcrypt
+
+def _hash_password(plain: str) -> str:
+    return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return _bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
 
 app = FastAPI(title="College0 Backend")
 
@@ -40,9 +50,10 @@ class DropRequest(BaseModel):
 class RegisterUser(BaseModel):
     email: str
     password: str
-    name: str = None 
+    name: str = None
     full_name: str = None
-    account_type: str = "Student" 
+    role: str = "student"
+    account_type: str = "student"
 
 class LoginUser(BaseModel):
     email: str
@@ -76,12 +87,43 @@ def home():
 
 @app.post("/auth/register")
 def register_user(user: RegisterUser, db: Session = Depends(get_db)):
-    print(f"--- Incoming Registration ---")
-    print(f"Data: {user.dict()}") 
-    return {
-        "status": "Success", 
-        "message": "Backend received data! No more 422 error."
-    }
+    email = user.email.strip().lower()
+    name = (user.name or user.full_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required.")
+
+    # Reject duplicate email
+    existing = db.execute(
+        text("SELECT 1 FROM student WHERE LOWER(email) = :e UNION SELECT 1 FROM instructor WHERE LOWER(email) = :e"),
+        {"e": email}
+    ).fetchone()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered.")
+
+    role = (user.role or user.account_type or "student").lower()
+    hashed = _hash_password(user.password)
+    user_type = "STUDENT" if role == "student" else "INSTRUCTOR"
+
+    new_id = db.execute(
+        text("INSERT INTO college0_user (type) VALUES (CAST(:t AS user_type_enum)) RETURNING id"),
+        {"t": user_type}
+    ).fetchone()[0]
+
+    if role == "student":
+        db.execute(
+            text("INSERT INTO student (id, email, password_hash, name, gpa) VALUES (:id, :email, :pw, :name, 0.0)"),
+            {"id": new_id, "email": email, "pw": hashed, "name": name}
+        )
+    else:
+        dept_row = db.execute(text("SELECT id FROM department LIMIT 1")).fetchone()
+        dept_id = dept_row[0] if dept_row else 1
+        db.execute(
+            text("INSERT INTO instructor (id, email, password_hash, name, department_id) VALUES (:id, :email, :pw, :name, :dept)"),
+            {"id": new_id, "email": email, "pw": hashed, "name": name, "dept": dept_id}
+        )
+
+    db.commit()
+    return {"id": str(new_id), "name": name, "role": role}
 
 @app.post("/auth/login")
 def login_user(user: LoginUser, db: Session = Depends(get_db)):
@@ -92,32 +134,104 @@ def login_user(user: LoginUser, db: Session = Depends(get_db)):
     - role: user's type (STUDENT, INSTRUCTOR, REGISTRAR)
     - email: user's email
     """
+    email = user.email.strip().lower()
+
+    # Hardcoded registrar (registrar table has no email column)
+    if email == "registrar@college.edu" and user.password == "registrar":
+        reg = db.execute(text("SELECT id, name FROM registrar LIMIT 1")).fetchone()
+        if reg:
+            return {"id": str(reg.id), "name": reg.name, "role": "registrar"}
+
     query = text("""
-        SELECT u.id, u.type as role, 
-               COALESCE(s.name, i.name, r.name) as name,
-               COALESCE(s.email, i.email, r.email) as email
+        SELECT u.id, u.type as role,
+               COALESCE(s.name, i.name) as name,
+               COALESCE(s.email, i.email) as email,
+               COALESCE(s.password_hash, i.password_hash) as password_hash
         FROM college0_user u
         LEFT JOIN student s ON u.id = s.id
         LEFT JOIN instructor i ON u.id = i.id
-        LEFT JOIN registrar r ON u.id = r.id
-        WHERE COALESCE(s.email, i.email, r.email) = :email 
+        WHERE LOWER(COALESCE(s.email, i.email)) = :email
     """)
-    result = db.execute(query, {"email": user.email}).fetchone()
+    result = db.execute(query, {"email": email}).fetchone()
 
     if not result:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    stored = result.password_hash or ""
+    if stored.startswith("$2"):
+        valid = _verify_password(user.password, stored)
+    else:
+        valid = (user.password == "password")  # seed data fallback
+
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
     return {
-        "status": "Success",
-        "user": {
-            "id": result.id,
-            "name": result.name,
-            "role": str(result.role),
-            "email": result.email
-        }
+        "id": str(result.id),
+        "name": result.name,
+        "role": str(result.role).lower(),
     }
 
 #Student endpoints
+@app.get("/student/status")
+def get_student_status(student_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """GET /student/status?student_id={id}
+    Returns the student's academic standing as StudentStatusDTO.
+    Read-only — does not mutate any rows.
+    """
+    try:
+        sid = int(student_id) if student_id else 1
+    except (ValueError, TypeError):
+        sid = 1
+
+    student = db.execute(
+        text("SELECT gpa FROM student WHERE id = :id"),
+        {"id": sid}
+    ).fetchone()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    gpa = float(student.gpa) if student.gpa is not None else 0.0
+
+    warning_count = int(db.execute(
+        text("SELECT COUNT(*) FROM warning WHERE user_id = :id AND cleared = false"),
+        {"id": sid}
+    ).scalar() or 0)
+
+    terminated = db.execute(
+        text("SELECT 1 FROM termination WHERE student_id = :id"),
+        {"id": sid}
+    ).fetchone() is not None
+
+    suspended = db.execute(
+        text("SELECT 1 FROM student_suspension WHERE student_id = :id LIMIT 1"),
+        {"id": sid}
+    ).fetchone() is not None
+
+    on_honor_roll = db.execute(
+        text("SELECT 1 FROM student_honor_roll WHERE student_id = :id LIMIT 1"),
+        {"id": sid}
+    ).fetchone() is not None
+
+    if terminated:
+        standing = "TERMINATED"
+    elif suspended or warning_count >= 3:
+        standing = "SUSPENDED"
+    elif 2.0 <= gpa <= 2.25:
+        standing = "WARNING_MANDATORY_INTERVIEW"
+    elif on_honor_roll or gpa >= 3.5:
+        standing = "HONOR_ROLL"
+    else:
+        standing = "ACTIVE"
+
+    return {
+        "student_id": str(sid),
+        "standing": standing,
+        "gpa": gpa,
+        "warning_count": warning_count,
+        "suspended": suspended or warning_count >= 3,
+    }
+
 @app.get("/submit-review")
 def submit_review(review: ReviewCreate, db: Session = Depends(get_db)):
     taboo_query = text("SELECT word FROM taboo_word")
@@ -854,6 +968,43 @@ def handle_waitlist_action(class_id: int, data: dict, db: Session = Depends(get_
 
     db.commit()
     return {"status": "success", "message": f"Waitlist entry {action}d"}
+
+@app.post("/instructor/warnings")
+def issue_warning(data: dict, db: Session = Depends(get_db)):
+    """POST /instructor/warnings
+    Issue a warning to a student: { instructor_id, student_id, class_id, reason }
+    Validates that the student is actually enrolled in the instructor's class.
+    """
+    instructor_id = data.get("instructor_id")
+    student_id = data.get("student_id")
+    class_id = data.get("class_id")
+    reason = (data.get("reason") or "").strip()
+
+    if not reason:
+        raise HTTPException(status_code=400, detail="Reason is required.")
+
+    # Confirm the class belongs to this instructor
+    owns = db.execute(
+        text("SELECT 1 FROM class WHERE id = :cid AND professor_id = :iid"),
+        {"cid": class_id, "iid": instructor_id}
+    ).fetchone()
+    if not owns:
+        raise HTTPException(status_code=403, detail="You are not the instructor for this class.")
+
+    # Confirm the student is enrolled in that class
+    enrolled = db.execute(
+        text("SELECT 1 FROM enrollment WHERE class_id = :cid AND student_id = :sid AND status = 'ENROLLED'"),
+        {"cid": class_id, "sid": student_id}
+    ).fetchone()
+    if not enrolled:
+        raise HTTPException(status_code=403, detail="Student is not enrolled in your class.")
+
+    db.execute(
+        text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
+        {"uid": student_id, "desc": reason[:255]}
+    )
+    db.commit()
+    return {"status": "issued", "message": "Warning issued successfully."}
 
 #Registrar endpoints
 @app.get("/registrar/applications")

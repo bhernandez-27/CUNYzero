@@ -27,7 +27,7 @@ function fmtSlots(slots: StudentClassDTO["time_slots"]) {
 
 export default async function MyClassesPage() {
   const session = await getSession();
-  if (!session) redirect("/auth/login");
+  if (!session) redirect("/auth");
   if (session.role !== "student") redirect("/dashboard");
 
   const baseUrl = process.env.MAIN_URL ?? "http://localhost:3000";
