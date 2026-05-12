@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import { getSession } from "@/lib/auth/session";
 import type { InstructorClassDTO } from "@/lib/instructor/types";
@@ -26,7 +27,11 @@ export default async function InstructorDashboardPage() {
 
   try {
     const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
-    const res = await fetch(`${baseUrl}/api/instructor/classes`, { cache: "no-store" });
+    const cookieStore = await cookies();
+    const res = await fetch(`${baseUrl}/api/instructor/classes`, {
+      cache: "no-store",
+      headers: { cookie: cookieStore.toString() },
+    });
     if (!res.ok) throw new Error(res.statusText);
     classes = (await res.json()) as InstructorClassDTO[];
   } catch (err) {

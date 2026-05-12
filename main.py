@@ -172,6 +172,10 @@ def login_user(user: LoginUser, db: Session = Depends(get_db)):
         "role": str(result.role).lower(),
     }
 
+@app.post("/auth/logout")
+def logout_user():
+    return {"status": "logged_out"}
+
 #Student endpoints
 @app.get("/student/status")
 def get_student_status(student_id: Optional[str] = None, db: Session = Depends(get_db)):
@@ -882,33 +886,114 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
 @app.get("/instructor/classes")
 def get_instructor_classes(instructor_id: int, db: Session = Depends(get_db)):
     """GET /instructor/classes?instructor_id={id}
-    Returns instructor's assigned classes with time slots and enrollment counts
+    Returns instructor's assigned classes matching InstructorClassDTO.
     """
     query = text("""
-        SELECT cl.id, co.name, co.course_code, cl.num_students_enrolled, cl.max_num_students,
-               json_agg(json_build_object('day', m.day, 'start', m.start_time, 'end', m.end_time)) as time_slots
+        SELECT
+            cl.id                        AS class_id,
+            co.name                      AS course_name,
+            co.course_code               AS course_code,
+            CONCAT(co.course_code, '-', cl.id) AS section_id,
+            s.semester                   AS semester,
+            s.year                       AS year,
+            cl.max_num_students          AS capacity,
+            cl.num_students_enrolled     AS enrolled,
+            cl.current_num_on_waitlist   AS waitlisted,
+            COALESCE(
+                json_agg(
+                    json_build_object('day', m.day, 'start', m.start_time, 'end', m.end_time)
+                ) FILTER (WHERE m.id IS NOT NULL),
+                '[]'
+            )                            AS time_slots
         FROM class cl
         JOIN course co ON cl.course_id = co.id
+        JOIN semester s ON cl.semester_id = s.id
         LEFT JOIN class_day_met m ON m.class_id = cl.id
         WHERE cl.professor_id = :iid
-        GROUP BY cl.id, co.name, co.course_code, cl.num_students_enrolled, cl.max_num_students
+        GROUP BY cl.id, co.name, co.course_code, cl.max_num_students,
+                 cl.num_students_enrolled, cl.current_num_on_waitlist,
+                 s.semester, s.year
     """)
     rows = db.execute(query, {"iid": instructor_id}).fetchall()
-    return [dict(r._mapping) for r in rows]
+    result = []
+    for r in rows:
+        m = dict(r._mapping)
+        cancelled = db.execute(
+            text("SELECT 1 FROM class_cancellation WHERE class_id = :cid LIMIT 1"),
+            {"cid": m["class_id"]}
+        ).fetchone()
+        result.append({
+            "class_id":    str(m["class_id"]),
+            "course_name": m["course_name"],
+            "course_code": str(m["course_code"]),
+            "section_id":  m["section_id"],
+            "semester":    str(m["semester"]),
+            "year":        int(m["year"]),
+            "capacity":    int(m["capacity"]),
+            "enrolled":    int(m["enrolled"]),
+            "waitlisted":  int(m["waitlisted"]),
+            "time_slots":  m["time_slots"] if isinstance(m["time_slots"], list) else [],
+            "status":      "CANCELLED" if cancelled else "ACTIVE",
+        })
+    return result
 
 @app.get("/instructor/roster/{class_id}")
 def get_roster(class_id: int, db: Session = Depends(get_db)):
     """GET /instructor/roster/{classId}
-    Returns enrolled students for a class (name, email, grade, enrollment_id)
+    Returns ClassRosterDTO including class info and student list.
     """
-    query = text("""
-        SELECT s.name, s.email, e.number_grade as grade, e.id as enrollment_id
+    cls = db.execute(text("""
+        SELECT co.name AS course_name, co.course_code,
+               CONCAT(co.course_code, '-', cl.id) AS section_id,
+               s.semester, s.year
+        FROM class cl
+        JOIN course co ON cl.course_id = co.id
+        JOIN semester s ON cl.semester_id = s.id
+        WHERE cl.id = :cid
+    """), {"cid": class_id}).fetchone()
+
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    rows = db.execute(text("""
+        SELECT e.id AS enrollment_id, st.id AS student_id,
+               st.name AS student_name, st.email, e.number_grade, e.status
         FROM enrollment e
-        JOIN student s ON e.student_id = s.id
-        WHERE e.class_id = :cid AND e.status = 'ENROLLED'
-    """)
-    rows = db.execute(query, {"cid": class_id}).fetchall()
-    return [dict(r._mapping) for r in rows]
+        JOIN student st ON e.student_id = st.id
+        WHERE e.class_id = :cid AND e.status IN ('ENROLLED', 'COMPLETED')
+    """), {"cid": class_id}).fetchall()
+
+    def num_to_letter(val):
+        if val is None: return None
+        v = float(val)
+        if v >= 90: return "A"
+        if v >= 80: return "B"
+        if v >= 70: return "C"
+        if v >= 60: return "D"
+        return "F"
+
+    students = [
+        {
+            "enrollment_id": str(r.enrollment_id),
+            "student_id":    str(r.student_id),
+            "student_name":  r.student_name,
+            "email":         r.email,
+            "grade":         num_to_letter(r.number_grade),
+            "status":        r.status,
+        }
+        for r in rows
+    ]
+
+    return {
+        "class_id":    str(class_id),
+        "course_name": cls.course_name,
+        "course_code": str(cls.course_code),
+        "section_id":  cls.section_id,
+        "semester":    str(cls.semester),
+        "year":        int(cls.year),
+        "time_slots":  [],
+        "students":    students,
+    }
 
 @app.post("/instructor/grades")
 def submit_grades(data: dict, db: Session = Depends(get_db)):
