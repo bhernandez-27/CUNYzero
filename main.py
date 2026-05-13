@@ -991,6 +991,10 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
 
 @app.post("/registration/confirm")
 def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends(get_db)):
+    sem_state = db.execute(
+        text("SELECT current_period FROM semester_state LIMIT 1")
+    ).fetchone()
+    curr_period = sem_state[0] if sem_state else "CLASS_SETUP"
     try:
         sid = int(data.student_id)
     except (ValueError, TypeError):
@@ -1066,6 +1070,15 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
             waitlisted_out.append(section_id)
 
     db.commit()
+
+    is_cancelled_student = db.execute(text("""
+        SELECT 1 FROM class_cancellation cc 
+        JOIN enrollment e ON cc.class_id = e.class_id 
+        WHERE e.student_id = :sid
+    """), {"sid": sid}).fetchone()
+    
+    if curr_period == "CLASS_RUNNING" and not is_cancelled_student:
+        raise HTTPException(status_code=403, detail="Registration is closed.")
 
     return {
         "status": "OK",
@@ -1275,10 +1288,6 @@ def handle_waitlist_action(class_id: int, data: dict, db: Session = Depends(get_
 
 @app.post("/instructor/warnings")
 def issue_warning(data: dict, db: Session = Depends(get_db)):
-    """POST /instructor/warnings
-    Issue a warning to a student: { instructor_id, student_id, class_id, reason }
-    Validates that the student is actually enrolled in the instructor's class.
-    """
     instructor_id = data.get("instructor_id")
     student_id = data.get("student_id")
     class_id = data.get("class_id")
@@ -1286,29 +1295,36 @@ def issue_warning(data: dict, db: Session = Depends(get_db)):
 
     if not reason:
         raise HTTPException(status_code=400, detail="Reason is required.")
-
-    # Confirm the class belongs to this instructor
-    owns = db.execute(
-        text("SELECT 1 FROM class WHERE id = :cid AND professor_id = :iid"),
-        {"cid": class_id, "iid": instructor_id}
-    ).fetchone()
+    owns = db.execute(text("SELECT 1 FROM class WHERE id = :cid AND professor_id = :iid"), 
+                      {"cid": class_id, "iid": instructor_id}).fetchone()
     if not owns:
-        raise HTTPException(status_code=403, detail="You are not the instructor for this class.")
+        raise HTTPException(status_code=403, detail="Not the instructor.")
 
-    # Confirm the student is enrolled in that class
-    enrolled = db.execute(
-        text("SELECT 1 FROM enrollment WHERE class_id = :cid AND student_id = :sid AND status = 'ENROLLED'"),
-        {"cid": class_id, "sid": student_id}
-    ).fetchone()
+    enrolled = db.execute(text("SELECT 1 FROM enrollment WHERE class_id = :cid AND student_id = :sid AND status = 'ENROLLED'"), 
+                          {"cid": class_id, "sid": student_id}).fetchone()
     if not enrolled:
-        raise HTTPException(status_code=403, detail="Student is not enrolled in your class.")
-
+        raise HTTPException(status_code=403, detail="Student not enrolled.")
+    
     db.execute(
-        text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
+        text("INSERT INTO warning (user_id, description, cleared) VALUES (:uid, :desc, false)"),
         {"uid": student_id, "desc": reason[:255]}
     )
-    db.commit()
-    return {"status": "issued", "message": "Warning issued successfully."}
+    db.commit() 
+
+    #Check for Suspension
+    count = db.execute(
+        text("SELECT COUNT(*) FROM warning WHERE user_id = :uid AND cleared = false"), 
+        {"uid": student_id}
+    ).scalar()
+
+    if count >= 3:
+        db.execute(text("""
+            INSERT INTO student_suspension (student_id, start_semester, fine_amount) 
+            VALUES (:sid, 'FALL_2026', 500.00)
+        """), {"sid": student_id})
+        db.commit()
+
+    return {"status": "issued", "message": f"Warning issued. Total active: {count}"}
 
 #Registrar endpoints
 @app.get("/registrar/applications")
@@ -1464,7 +1480,7 @@ def _fmt_time(t) -> str:
 @app.get("/registrar/classes")
 def get_all_classes(db: Session = Depends(get_db)):
     """GET /registrar/classes → ClassesPageDTO {classes, instructors}"""
-    # ── classes ──────────────────────────────────────────────────────────────
+    # classes
     cls_rows = db.execute(text("""
         SELECT cl.id                              AS class_id,
                co.name                            AS course_name,
@@ -1868,7 +1884,6 @@ def advance_semester(db: Session = Depends(get_db)):
     current_state = str(current_row[0]) if current_row else "CLASS_SETUP"
     next_idx = (states.index(current_state) + 1) % len(states)
     next_state = states[next_idx]
-
     # When cycling back to CLASS_SETUP advance the semester/year
     sem_name = str(current_row[1]) if current_row else "Spring"
     yr = int(current_row[2]) if current_row else 2026
@@ -1881,6 +1896,14 @@ def advance_semester(db: Session = Depends(get_db)):
         text("UPDATE semester_state SET current_period = :ns, semester_name = :sn, year = :yr, advanced_at = NOW()"),
         {"ns": next_state, "sn": sem_name, "yr": yr},
     )
+    failed_twice = db.execute(text("""
+    SELECT student_id FROM enrollment 
+    WHERE number_grade < 60 
+    GROUP BY student_id, class_id HAVING COUNT(*) >= 2
+""")).fetchall()
+    for r in failed_twice:
+        db.execute(text("UPDATE student SET status = 'TERMINATED' WHERE id = :sid"), {"sid": r.student_id})
+
 
     cancellation_report: list[dict] = []
     warnings_issued = 0
