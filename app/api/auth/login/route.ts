@@ -115,15 +115,20 @@ export async function POST(req: Request) {
       const role = (data.role as string) ?? devAccount?.role ?? "student";
       const name = (data.name as string) ?? devAccount?.name ?? (data.email as string) ?? "User";
       const id = String(data.id ?? devAccount?.id ?? "");
+      const applicant = (data.applicant && typeof data.applicant === "object") ? data.applicant : undefined;
 
       const maxAge = Boolean(remember) ? 60 * 60 * 24 * 30 : 60 * 60 * 24;
-      res.cookies.set("college0_user", JSON.stringify({ id, name, role }), {
-        httpOnly: true,
-        path: "/",
-        sameSite: "lax",
-        maxAge,
-        secure: process.env.NODE_ENV === "production",
-      });
+      res.cookies.set(
+        "college0_user",
+        JSON.stringify(applicant ? { id, name, role, applicant } : { id, name, role }),
+        {
+          httpOnly: true,
+          path: "/",
+          sameSite: "lax",
+          maxAge,
+          secure: process.env.NODE_ENV === "production",
+        },
+      );
     } catch {
       // If Python's body isn't JSON we still return their response; just no session cookie.
     }

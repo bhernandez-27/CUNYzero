@@ -71,6 +71,25 @@ class ConfirmRegistrationRequest(BaseModel):
     selected_section_ids: List[str]
     current_section_ids: List[str]
 
+class StudentApplicationIn(BaseModel):
+    fullName: str
+    email: str
+    password: str
+    priorGpa: float
+    phone: Optional[str] = None
+    street: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postalCode: Optional[str] = None
+
+class InstructorApplicationIn(BaseModel):
+    fullName: str
+    email: str
+    password: str
+    fieldOfExpertise: str
+    credentialsSummary: str
+    phone: Optional[str] = None
+
 
 def get_db():
     db = SessionLocal()
@@ -97,11 +116,23 @@ def create_missing_tables():
             "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS semester_name VARCHAR(10) NOT NULL DEFAULT 'Spring'",
             "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS year INT NOT NULL DEFAULT 2026",
             "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS advanced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+            # Visitor application tables: extend so applicants can pick own credentials
+            "ALTER TABLE visitor_student_application ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(255)",
+            "ALTER TABLE visitor_student_application ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)",
+            "ALTER TABLE visitor_student_application ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+            "ALTER TABLE visitor_instructor_application ADD COLUMN IF NOT EXISTS applicant_email VARCHAR(255)",
+            "ALTER TABLE visitor_instructor_application ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)",
+            "ALTER TABLE visitor_instructor_application ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+            "ALTER TABLE visitor_instructor_application ADD COLUMN IF NOT EXISTS field_of_expertise VARCHAR(255)",
+            "ALTER TABLE visitor_instructor_application ADD COLUMN IF NOT EXISTS credentials_summary TEXT",
+            # visitor_progrm_quota_reached is NOT NULL in original schema; relax for new applications
+            "ALTER TABLE visitor_student_application ALTER COLUMN visitor_progrm_quota_reached DROP NOT NULL",
+            "ALTER TABLE visitor_student_application ALTER COLUMN visitor_progrm_quota_reached SET DEFAULT FALSE",
         ]:
             try:
                 db.execute(text(col_sql))
-            except Exception:
-                pass
+            except Exception as ce:
+                print(f"[startup] migration skipped: {ce}")
         count = db.execute(text("SELECT COUNT(*) FROM semester_state")).scalar()
         if count == 0:
             db.execute(text(
@@ -205,27 +236,138 @@ def login_user(user: LoginUser, db: Session = Depends(get_db)):
     """)
     result = db.execute(query, {"email": email}).fetchone()
 
-    if not result:
+    if result:
+        stored = result.password_hash or ""
+        if stored.startswith("$2"):
+            valid = _verify_password(user.password, stored)
+        else:
+            valid = (user.password == "password")  # seed data fallback
+
+        if not valid:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+
+        return {
+            "id": str(result.id),
+            "name": result.name,
+            "role": str(result.role).lower(),
+        }
+
+    # No matriculated account — check pending/rejected applications.
+    app_row = db.execute(
+        text("""
+            SELECT id, visitor_name, password_hash, decision, 'student' AS kind, visitor_gpa AS extra
+            FROM visitor_student_application
+            WHERE LOWER(applicant_email) = :email
+            UNION ALL
+            SELECT id, visitor_name, password_hash, decision, 'instructor' AS kind, NULL AS extra
+            FROM visitor_instructor_application
+            WHERE LOWER(applicant_email) = :email
+            LIMIT 1
+        """),
+        {"email": email}
+    ).fetchone()
+
+    if not app_row:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    stored = result.password_hash or ""
-    if stored.startswith("$2"):
-        valid = _verify_password(user.password, stored)
-    else:
-        valid = (user.password == "password")  # seed data fallback
-
-    if not valid:
+    stored = app_row.password_hash or ""
+    if not stored.startswith("$2") or not _verify_password(user.password, stored):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    decision = str(app_row.decision or "pending").lower()
+    if decision == "accept":
+        # Account should exist by now; treat as stale-state error
+        raise HTTPException(status_code=409, detail="Application approved but account not yet provisioned. Try again shortly.")
 
     return {
-        "id": str(result.id),
-        "name": result.name,
-        "role": str(result.role).lower(),
+        "id": f"app-{app_row.kind}-{app_row.id}",
+        "name": app_row.visitor_name,
+        "role": "applicant",
+        "applicant": {
+            "application_id": str(app_row.id),
+            "kind": app_row.kind,
+            "status": "REJECTED" if decision == "reject" else "PENDING",
+            "applied_email": email,
+            "prior_gpa": float(app_row.extra) if app_row.extra is not None else None,
+        },
     }
 
 @app.post("/auth/logout")
 def logout_user():
     return {"status": "logged_out"}
+
+# Visitor application endpoints
+
+def _email_already_taken(db: Session, email: str) -> bool:
+    """Reject duplicates against any account or pending/rejected application."""
+    row = db.execute(
+        text("""
+            SELECT 1 FROM student WHERE LOWER(email) = :e
+            UNION SELECT 1 FROM instructor WHERE LOWER(email) = :e
+            UNION SELECT 1 FROM visitor_student_application
+                WHERE LOWER(applicant_email) = :e AND COALESCE(decision::text, 'pending') <> 'reject'
+            UNION SELECT 1 FROM visitor_instructor_application
+                WHERE LOWER(applicant_email) = :e AND COALESCE(decision::text, 'pending') <> 'reject'
+        """),
+        {"e": email}
+    ).fetchone()
+    return row is not None
+
+@app.post("/applications/student")
+def apply_as_student(payload: StudentApplicationIn, db: Session = Depends(get_db)):
+    name = (payload.fullName or "").strip()
+    email = (payload.email or "").strip().lower()
+    if not name or not email or not payload.password:
+        raise HTTPException(status_code=400, detail="Name, email, and password are required.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if not (0.0 <= float(payload.priorGpa) <= 4.0):
+        raise HTTPException(status_code=400, detail="Prior GPA must be between 0 and 4.0.")
+    if _email_already_taken(db, email):
+        raise HTTPException(status_code=409, detail="This email is already in use or has a pending application.")
+
+    hashed = _hash_password(payload.password)
+    row = db.execute(
+        text("""
+            INSERT INTO visitor_student_application
+                (visitor_name, decision, visitor_gpa, visitor_progrm_quota_reached,
+                 applicant_email, password_hash, applied_at)
+            VALUES (:name, CAST('pending' AS app_decision_enum), :gpa, FALSE, :email, :pw, NOW())
+            RETURNING id
+        """),
+        {"name": name, "gpa": float(payload.priorGpa), "email": email, "pw": hashed}
+    ).fetchone()
+    db.commit()
+    return {"ok": True, "applicationId": str(row[0]), "message": "Application submitted. Sign in to track its status."}
+
+@app.post("/applications/instructor")
+def apply_as_instructor(payload: InstructorApplicationIn, db: Session = Depends(get_db)):
+    name = (payload.fullName or "").strip()
+    email = (payload.email or "").strip().lower()
+    field = (payload.fieldOfExpertise or "").strip()
+    creds = (payload.credentialsSummary or "").strip()
+    if not name or not email or not payload.password or not field:
+        raise HTTPException(status_code=400, detail="Name, email, password, and field of expertise are required.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if len(creds) < 20:
+        raise HTTPException(status_code=400, detail="Qualifications summary must be at least 20 characters.")
+    if _email_already_taken(db, email):
+        raise HTTPException(status_code=409, detail="This email is already in use or has a pending application.")
+
+    hashed = _hash_password(payload.password)
+    row = db.execute(
+        text("""
+            INSERT INTO visitor_instructor_application
+                (visitor_name, decision, applicant_email, password_hash, applied_at,
+                 field_of_expertise, credentials_summary)
+            VALUES (:name, CAST('pending' AS app_decision_enum), :email, :pw, NOW(), :field, :creds)
+            RETURNING id
+        """),
+        {"name": name, "email": email, "pw": hashed, "field": field, "creds": creds}
+    ).fetchone()
+    db.commit()
+    return {"ok": True, "applicationId": str(row[0]), "message": "Application submitted. Sign in to track its status."}
 
 #Student endpoints
 @app.get("/student/status")
@@ -1178,26 +1320,35 @@ def get_pending_applications(db: Session = Depends(get_db)):
         return "PENDING"
 
     students = db.execute(text("""
-        SELECT id, visitor_name, visitor_gpa, decision
+        SELECT id, visitor_name, visitor_gpa, decision, applicant_email, applied_at
         FROM visitor_student_application
         WHERE decision = 'pending' OR decision IS NULL
+        ORDER BY id DESC
     """)).fetchall()
 
     instructors = db.execute(text("""
-        SELECT id, visitor_name, decision
+        SELECT id, visitor_name, decision, applicant_email, applied_at,
+               field_of_expertise, credentials_summary
         FROM visitor_instructor_application
         WHERE decision = 'pending' OR decision IS NULL
+        ORDER BY id DESC
     """)).fetchall()
+
+    def _iso(dt):
+        try:
+            return dt.isoformat() if dt else datetime.datetime.now().isoformat()
+        except Exception:
+            return datetime.datetime.now().isoformat()
 
     return {
         "students": [
             {
                 "application_id": str(r.id),
                 "full_name": r.visitor_name,
-                "email": f"applicant{r.id}@pending.edu",
+                "email": r.applicant_email or f"applicant{r.id}@pending.edu",
                 "prior_gpa": float(r.visitor_gpa) if r.visitor_gpa else 0.0,
                 "status": map_decision(r.decision),
-                "applied_at": datetime.datetime.now().isoformat(),
+                "applied_at": _iso(r.applied_at),
                 "type": "student",
             }
             for r in students
@@ -1206,11 +1357,11 @@ def get_pending_applications(db: Session = Depends(get_db)):
             {
                 "application_id": str(r.id),
                 "full_name": r.visitor_name,
-                "email": f"instructor{r.id}@pending.edu",
-                "field_of_expertise": "General",
-                "credentials_summary": "Pending review",
+                "email": r.applicant_email or f"instructor{r.id}@pending.edu",
+                "field_of_expertise": r.field_of_expertise or "General",
+                "credentials_summary": r.credentials_summary or "Pending review",
                 "status": map_decision(r.decision),
-                "applied_at": datetime.datetime.now().isoformat(),
+                "applied_at": _iso(r.applied_at),
                 "type": "instructor",
             }
             for r in instructors
@@ -1219,22 +1370,83 @@ def get_pending_applications(db: Session = Depends(get_db)):
 
 @app.patch("/registrar/applications")
 def process_application(data: dict, db: Session = Depends(get_db)):
-    """PATCH /registrar/applications: { application_id, type, decision }"""
+    """PATCH /registrar/applications: { application_id, type, decision, justification? }
+
+    On approval, the applicant's submitted email + password become a real
+    student/instructor account so they can log into the full dashboard.
+    """
     app_id = data["application_id"]
     raw = str(data["decision"]).lower()
     decision = "accept" if raw == "approved" else "reject"
     app_type = str(data.get("type", "student")).lower()
 
     if app_type == "instructor":
-        db.execute(
-            text("UPDATE visitor_instructor_application SET decision = CAST(:d AS app_decision_enum) WHERE id = :id"),
-            {"d": decision, "id": app_id}
-        )
+        app_row = db.execute(
+            text("""SELECT id, visitor_name, applicant_email, password_hash
+                    FROM visitor_instructor_application WHERE id = :id"""),
+            {"id": app_id}
+        ).fetchone()
+        if not app_row:
+            raise HTTPException(status_code=404, detail="Application not found.")
+
+        if decision == "accept":
+            if not app_row.applicant_email or not app_row.password_hash:
+                raise HTTPException(status_code=409, detail="Application is missing credentials and cannot be approved.")
+            new_uid = db.execute(
+                text("INSERT INTO college0_user (type) VALUES (CAST('INSTRUCTOR' AS user_type_enum)) RETURNING id")
+            ).fetchone()[0]
+            dept_row = db.execute(text("SELECT id FROM department LIMIT 1")).fetchone()
+            dept_id = dept_row[0] if dept_row else 1
+            db.execute(
+                text("""INSERT INTO instructor (id, email, password_hash, name, department_id)
+                        VALUES (:id, :e, :pw, :n, :d)"""),
+                {"id": new_uid, "e": app_row.applicant_email, "pw": app_row.password_hash,
+                 "n": app_row.visitor_name, "d": dept_id}
+            )
+            db.execute(
+                text("""UPDATE visitor_instructor_application
+                        SET decision = CAST('accept' AS app_decision_enum), new_instructor_id = :nid
+                        WHERE id = :id"""),
+                {"nid": new_uid, "id": app_id}
+            )
+        else:
+            db.execute(
+                text("UPDATE visitor_instructor_application SET decision = CAST('reject' AS app_decision_enum) WHERE id = :id"),
+                {"id": app_id}
+            )
     else:
-        db.execute(
-            text("UPDATE visitor_student_application SET decision = CAST(:d AS app_decision_enum) WHERE id = :id"),
-            {"d": decision, "id": app_id}
-        )
+        app_row = db.execute(
+            text("""SELECT id, visitor_name, applicant_email, password_hash, visitor_gpa
+                    FROM visitor_student_application WHERE id = :id"""),
+            {"id": app_id}
+        ).fetchone()
+        if not app_row:
+            raise HTTPException(status_code=404, detail="Application not found.")
+
+        if decision == "accept":
+            if not app_row.applicant_email or not app_row.password_hash:
+                raise HTTPException(status_code=409, detail="Application is missing credentials and cannot be approved.")
+            new_uid = db.execute(
+                text("INSERT INTO college0_user (type) VALUES (CAST('STUDENT' AS user_type_enum)) RETURNING id")
+            ).fetchone()[0]
+            db.execute(
+                text("""INSERT INTO student (id, email, password_hash, name, gpa)
+                        VALUES (:id, :e, :pw, :n, :g)"""),
+                {"id": new_uid, "e": app_row.applicant_email, "pw": app_row.password_hash,
+                 "n": app_row.visitor_name, "g": float(app_row.visitor_gpa or 0.0)}
+            )
+            db.execute(
+                text("""UPDATE visitor_student_application
+                        SET decision = CAST('accept' AS app_decision_enum), new_student_id = :nid
+                        WHERE id = :id"""),
+                {"nid": new_uid, "id": app_id}
+            )
+        else:
+            db.execute(
+                text("UPDATE visitor_student_application SET decision = CAST('reject' AS app_decision_enum) WHERE id = :id"),
+                {"id": app_id}
+            )
+
     db.commit()
     return {"status": data["decision"], "message": f"Application {raw}."}
 

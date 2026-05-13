@@ -33,7 +33,9 @@ export default function SignInForm() {
         }
         const data = (await res.json()) as { role?: string };
         form.reset();
-        if (data.role === "registrar") {
+        if (data.role === "applicant") {
+          router.push("/dashboard/pending");
+        } else if (data.role === "registrar") {
           router.push("/dashboard/registrar/applications");
         } else if (data.role === "instructor") {
           router.push("/dashboard/instructor");

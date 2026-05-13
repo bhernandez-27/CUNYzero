@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import { getSession } from "@/lib/auth/session";
 import type { StudentClassDTO } from "@/app/api/student/classes/route";
@@ -31,10 +32,15 @@ export default async function MyClassesPage() {
   if (session.role !== "student") redirect("/dashboard");
 
   const baseUrl = process.env.MAIN_URL ?? "http://localhost:3000";
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
   let classes: StudentClassDTO[] = [];
 
   try {
-    const res = await fetch(`${baseUrl}/api/student/classes`, { cache: "no-store" });
+    const res = await fetch(`${baseUrl}/api/student/classes`, {
+      cache: "no-store",
+      headers: { cookie: cookieHeader },
+    });
     if (res.ok) classes = (await res.json()) as StudentClassDTO[];
   } catch {
     // leave classes as empty; handled below

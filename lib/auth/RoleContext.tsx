@@ -1,12 +1,13 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { SessionUser, UserRole } from "./session";
+import type { ApplicantInfo, SessionUser, UserRole } from "./session";
 
 type RoleContextValue = {
   role: UserRole;
   name: string;
   id: string;
+  applicant?: ApplicantInfo;
 };
 
 const RoleContext = createContext<RoleContextValue>({

@@ -40,18 +40,21 @@ const NAV: Record<UserRole, NavItem[]> = {
     { label: "Grade Audit", href: "/dashboard/registrar/grade-audit" },
     { label: "Graduation", href: "/dashboard/registrar/graduation" },
   ],
+  applicant: [{ label: "Application status", href: "/dashboard/pending" }],
 };
 
 const ROLE_LABEL: Record<UserRole, string> = {
   student: "Student portal",
   instructor: "Instructor portal",
   registrar: "Registrar portal",
+  applicant: "Application status",
 };
 
 const ROLE_INITIAL: Record<UserRole, string> = {
   student: "S",
   instructor: "I",
   registrar: "R",
+  applicant: "A",
 };
 
 function SidebarToggleIcon(props: { collapsed: boolean }) {

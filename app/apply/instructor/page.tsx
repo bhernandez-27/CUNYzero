@@ -15,10 +15,13 @@ export default function ApplyInstructorPage() {
     e.preventDefault();
     setError(null);
     const fd = new FormData(e.currentTarget);
+    const password = String(fd.get("password") ?? "");
+    const confirm = String(fd.get("confirm") ?? "");
 
     const payload = {
       fullName: String(fd.get("fullName") ?? "").trim(),
       email: String(fd.get("email") ?? "").trim(),
+      password,
       phone: String(fd.get("phone") ?? "").trim() || undefined,
       fieldOfExpertise: String(fd.get("fieldOfExpertise") ?? "").trim(),
       credentialsSummary: String(fd.get("credentialsSummary") ?? "").trim(),
@@ -30,6 +33,14 @@ export default function ApplyInstructorPage() {
     }
     if (!payload.email) {
       setError("Please enter your email.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match.");
       return;
     }
     if (!payload.fieldOfExpertise) {
@@ -74,8 +85,8 @@ export default function ApplyInstructorPage() {
           <p className="text-sm font-semibold text-emerald-900">Application received</p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-neutral-900">Thank you</h1>
           <p className="mt-4 text-sm text-neutral-700 leading-relaxed">
-            Your instructor application is pending review. Save your application ID. If approved, you will receive
-            credentials and class assignments from the Registrar.
+            Your instructor application is pending review. Sign in with the email and password you just chose to track its
+            status. Your account will unlock once the Registrar approves it.
           </p>
           <div className="mt-6 rounded-2xl bg-white border border-emerald-100 px-4 py-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Application ID</div>
@@ -83,10 +94,10 @@ export default function ApplyInstructorPage() {
           </div>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/public"
+              href="/auth"
               className="inline-flex items-center justify-center rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 transition"
             >
-              Back to public dashboard
+              Sign in to track status
             </Link>
             <button
               type="button"
@@ -109,8 +120,8 @@ export default function ApplyInstructorPage() {
       <p className="text-sm font-medium text-[#F07E62]">College0 · Instructor application</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-900">Apply as Instructor</h1>
       <p className="mt-4 text-neutral-600 text-sm leading-relaxed">
-        Share your background so the Registrar can evaluate your fit. Instructor rejections do not require a written
-        justification.
+        Share your background so the Registrar can evaluate your fit, and choose a password. After you submit, sign in
+        with the same email and password to track your application status. Your account unlocks once approved.
       </p>
 
       <form onSubmit={onSubmit} className="mt-10 space-y-6 rounded-[28px] border border-black/5 bg-white p-8 shadow-sm">
@@ -150,6 +161,36 @@ export default function ApplyInstructorPage() {
               name="phone"
               type="tel"
               autoComplete="tel"
+              className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#F7F5F1]/50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25"
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="block text-xs font-semibold text-neutral-700">
+              Password <span className="text-red-600">*</span>
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              placeholder="At least 8 characters"
+              className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#F7F5F1]/50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25"
+            />
+          </div>
+          <div>
+            <label htmlFor="confirm" className="block text-xs font-semibold text-neutral-700">
+              Confirm password <span className="text-red-600">*</span>
+            </label>
+            <input
+              id="confirm"
+              name="confirm"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              placeholder="Repeat password"
               className="mt-1.5 w-full rounded-xl border border-black/10 bg-[#F7F5F1]/50 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25"
             />
           </div>
