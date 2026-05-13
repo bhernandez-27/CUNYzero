@@ -1881,12 +1881,108 @@ def advance_semester(db: Session = Depends(get_db)):
         text("UPDATE semester_state SET current_period = :ns, semester_name = :sn, year = :yr, advanced_at = NOW()"),
         {"ns": next_state, "sn": sem_name, "yr": yr},
     )
+
+    cancellation_report: list[dict] = []
+    warnings_issued = 0
+    instructors_suspended = 0
+
+    if next_state == "CLASS_RUNNING":
+        # Find all classes with fewer than 3 enrolled students not yet cancelled
+        under_enrolled = db.execute(text("""
+            SELECT cl.id AS class_id, co.name AS course_name,
+                   cl.professor_id, cl.num_students_enrolled, cl.semester_id
+            FROM class cl
+            JOIN course co ON cl.course_id = co.id
+            WHERE cl.num_students_enrolled < 3
+              AND NOT EXISTS (
+                  SELECT 1 FROM class_cancellation cc WHERE cc.class_id = cl.id
+              )
+        """)).fetchall()
+
+        affected_student_ids: set[int] = set()
+
+        for row in under_enrolled:
+            # Collect affected students before dropping enrollments
+            student_rows = db.execute(text("""
+                SELECT student_id FROM enrollment
+                WHERE class_id = :cid AND status IN ('ENROLLED', 'WAITLISTED')
+            """), {"cid": row.class_id}).fetchall()
+            for s in student_rows:
+                affected_student_ids.add(s.student_id)
+
+            # Record cancellation
+            db.execute(text("""
+                INSERT INTO class_cancellation (class_id, semester_id, reason)
+                VALUES (:cid, :sid, :reason)
+            """), {
+                "cid": row.class_id,
+                "sid": row.semester_id,
+                "reason": "Under-enrolled: fewer than 3 students at semester start",
+            })
+
+            # Drop all enrollments for this class
+            db.execute(text("""
+                UPDATE enrollment SET status = 'DROPPED'
+                WHERE class_id = :cid AND status IN ('ENROLLED', 'WAITLISTED')
+            """), {"cid": row.class_id})
+
+            cancellation_report.append({
+                "class_id": row.class_id,
+                "course_name": row.course_name,
+                "enrolled": row.num_students_enrolled,
+            })
+
+        # Warn students who now have fewer than 2 active enrollments
+        for sid in affected_student_ids:
+            remaining = db.execute(text("""
+                SELECT COUNT(*) FROM enrollment
+                WHERE student_id = :sid AND status = 'ENROLLED'
+            """), {"sid": sid}).fetchone()[0]
+            if remaining < 2:
+                db.execute(text("""
+                    INSERT INTO warning (user_id, description) VALUES (:uid, :desc)
+                """), {"uid": sid, "desc": "Enrolled in fewer than 2 courses after cancellations at semester start"})
+                warnings_issued += 1
+
+        # Suspend instructors whose every class was just cancelled
+        instructor_ids = list({row.professor_id for row in under_enrolled if row.professor_id is not None})
+        susp_season = "Fall" if sem_name == "Spring" else "Spring"
+        susp_year = yr if sem_name == "Spring" else yr + 1
+        for iid in instructor_ids:
+            active_count = db.execute(text("""
+                SELECT COUNT(*) FROM class cl
+                WHERE cl.professor_id = :iid
+                  AND NOT EXISTS (
+                      SELECT 1 FROM class_cancellation cc WHERE cc.class_id = cl.id
+                  )
+            """), {"iid": iid}).fetchone()[0]
+            if active_count == 0:
+                already = db.execute(text("""
+                    SELECT 1 FROM instructor_suspension WHERE instructor_id = :iid LIMIT 1
+                """), {"iid": iid}).fetchone()
+                if not already:
+                    db.execute(text("""
+                        INSERT INTO instructor_suspension
+                            (instructor_id, reason, suspension_semester, suspension_year)
+                        VALUES (:iid, :reason, :season, :yr)
+                    """), {
+                        "iid": iid,
+                        "reason": "All assigned classes cancelled due to low enrollment",
+                        "season": susp_season,
+                        "yr": susp_year,
+                    })
+                    instructors_suspended += 1
+
     db.commit()
 
     updated = db.execute(
         text("SELECT current_period, semester_name, year, advanced_at FROM semester_state LIMIT 1")
     ).fetchone()
-    return _semester_dto(updated)
+    result = _semester_dto(updated)
+    result["cancelled_classes"] = cancellation_report
+    result["warnings_issued"] = warnings_issued
+    result["instructors_suspended"] = instructors_suspended
+    return result
 
 def _taboo_words_list(db: Session) -> list:
     rows = db.execute(text("SELECT word FROM taboo_word ORDER BY word")).fetchall()

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import DashboardShell from "@/components/dashboard/DashboardShell";
-import type { SemesterDTO, SemesterPeriod } from "@/app/api/registrar/semester/route";
+import type { SemesterDTO, SemesterPeriod, CancelledClassInfo } from "@/app/api/registrar/semester/route";
 import { PERIOD_ORDER } from "@/app/api/registrar/semester/route";
 
 type PageState = "loading" | "error" | "ready" | "confirming" | "advancing" | "advanced";
@@ -138,6 +138,9 @@ export default function SemesterPage() {
   const [pageState, setPageState] = useState<PageState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
+  const [cancelledClasses, setCancelledClasses] = useState<CancelledClassInfo[]>([]);
+  const [warningsIssued, setWarningsIssued] = useState(0);
+  const [instructorsSuspended, setInstructorsSuspended] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -168,6 +171,9 @@ export default function SemesterPage() {
         return;
       }
       setSemester(payload);
+      setCancelledClasses(payload.cancelled_classes ?? []);
+      setWarningsIssued(payload.warnings_issued ?? 0);
+      setInstructorsSuspended(payload.instructors_suspended ?? 0);
       setPageState("advanced");
     } catch {
       setAdvanceError("Network error. Check your connection and try again.");
@@ -308,18 +314,64 @@ export default function SemesterPage() {
 
                 {/* Success banner */}
                 {pageState === "advanced" && (
-                  <div className="rounded-2xl bg-white border border-black/5 shadow-sm px-5 py-4 flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-full bg-emerald-50 border border-emerald-200 grid place-items-center shrink-0">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                        <path d="M20 6L9 17l-5-5" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">Semester advanced</div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        The college is now in <span className="font-medium">{info.label}</span>. All automated actions have been triggered.
+                  <div className="rounded-2xl bg-white border border-black/5 shadow-sm px-5 py-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-full bg-emerald-50 border border-emerald-200 grid place-items-center shrink-0">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <path d="M20 6L9 17l-5-5" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Semester advanced</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          The college is now in <span className="font-medium">{info.label}</span>. All automated actions have been triggered.
+                        </div>
                       </div>
                     </div>
+
+                    {/* Automation report — only shown when advancing to CLASS_RUNNING */}
+                    {semester?.period === "CLASS_RUNNING" && (
+                      <div className="border-t border-slate-100 pt-3 space-y-2">
+                        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                          Automated actions
+                        </div>
+
+                        {cancelledClasses.length === 0 ? (
+                          <div className="text-xs text-slate-500">
+                            No classes were under-enrolled — all sections are running.
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-xs text-slate-700">
+                              <span className="font-semibold text-red-700">{cancelledClasses.length} class{cancelledClasses.length !== 1 ? "es" : ""} cancelled</span>
+                              {" "}due to fewer than 3 enrolled students:
+                            </div>
+                            <ul className="space-y-1">
+                              {cancelledClasses.map((c) => (
+                                <li key={c.class_id} className="flex items-center gap-2 text-xs text-slate-600">
+                                  <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 font-semibold text-[10px]">
+                                    CANCELLED
+                                  </span>
+                                  {c.course_name}
+                                  <span className="text-slate-400">({c.enrolled} enrolled)</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+
+                        {warningsIssued > 0 && (
+                          <div className="text-xs text-amber-700">
+                            {warningsIssued} student{warningsIssued !== 1 ? "s" : ""} warned for having fewer than 2 courses after cancellations.
+                          </div>
+                        )}
+                        {instructorsSuspended > 0 && (
+                          <div className="text-xs text-red-700">
+                            {instructorsSuspended} instructor{instructorsSuspended !== 1 ? "s" : ""} suspended — all their classes were cancelled.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

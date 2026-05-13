@@ -24,11 +24,20 @@ import { getAuthPythonBaseUrl } from "@/lib/auth/proxyUpstream";
 
 export type SemesterPeriod = "CLASS_SETUP" | "REGISTRATION" | "CLASS_RUNNING" | "GRADING";
 
+export type CancelledClassInfo = {
+  class_id: number;
+  course_name: string;
+  enrolled: number;
+};
+
 export type SemesterDTO = {
   period: SemesterPeriod;
   semester: "Fall" | "Spring";
   year: number;
   advanced_at: string;
+  cancelled_classes?: CancelledClassInfo[];
+  warnings_issued?: number;
+  instructors_suspended?: number;
 };
 
 export const PERIOD_LABELS: Record<SemesterPeriod, string> = {
