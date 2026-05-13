@@ -1946,7 +1946,7 @@ def advance_semester(db: Session = Depends(get_db)):
 
         # Suspend instructors whose every class was just cancelled
         instructor_ids = list({row.professor_id for row in under_enrolled if row.professor_id is not None})
-        susp_season = "Fall" if sem_name == "Spring" else "Spring"
+        susp_season = "FALL" if sem_name == "Spring" else "SPRING"
         susp_year = yr if sem_name == "Spring" else yr + 1
         for iid in instructor_ids:
             active_count = db.execute(text("""
