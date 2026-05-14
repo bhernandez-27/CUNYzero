@@ -703,6 +703,17 @@ def drop_course(data: DropRequest, db: Session = Depends(get_db)):
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid enrollment_id")
 
+    # Only allow drops during the REGISTRATION period
+    sem_state = db.execute(
+        text("SELECT current_period FROM semester_state LIMIT 1")
+    ).fetchone()
+    curr_period = sem_state[0] if sem_state else "CLASS_SETUP"
+    if curr_period != "REGISTRATION":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Dropping courses is only allowed during the Registration period. Current period: {curr_period}."
+        )
+
     enrollment = db.execute(
         text("""
             SELECT e.id, e.student_id, e.class_id, e.status
@@ -1107,8 +1118,32 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
         WHERE e.student_id = :sid
     """), {"sid": sid}).fetchone()
     
-    if curr_period == "CLASS_RUNNING" and not is_cancelled_student:
-        raise HTTPException(status_code=403, detail="Registration is closed.")
+    # Registration is only open during REGISTRATION period.
+    # Exception: students whose class was cancelled may re-register during CLASS_RUNNING.
+    registration_open = (curr_period == "REGISTRATION") or (curr_period == "CLASS_RUNNING" and is_cancelled_student)
+    if not registration_open:
+        raise HTTPException(status_code=403, detail="Registration is closed. The current period is " + curr_period + ".")
+
+    # Enforce 2–4 course load (new selections + already enrolled/waitlisted)
+    existing_count = db.execute(
+        text("SELECT COUNT(*) FROM enrollment WHERE student_id = :sid AND status IN ('ENROLLED', 'WAITLISTED')"),
+        {"sid": sid}
+    ).scalar() or 0
+    total_after = existing_count + len(data.selected_section_ids)
+    if total_after < 2:
+        return {
+            "status": "BLOCKED",
+            "enrolled": [],
+            "waitlisted": [],
+            "errors": [{"code": "COURSE_LOAD", "message": "You must register for at least 2 courses.", "min": 2, "max": 4, "count": total_after}]
+        }
+    if total_after > 4:
+        return {
+            "status": "BLOCKED",
+            "enrolled": [],
+            "waitlisted": [],
+            "errors": [{"code": "COURSE_LOAD", "message": "You cannot register for more than 4 courses.", "min": 2, "max": 4, "count": total_after}]
+        }
 
     def parse_class_id(section_id: str):
         try:

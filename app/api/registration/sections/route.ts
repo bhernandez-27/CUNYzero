@@ -36,6 +36,22 @@ export async function GET(req: Request) {
     return NextResponse.json(getMockRegistrationSections());
   }
 
+  // ── Period gate: registration is only open during REGISTRATION period ──
+  try {
+    const { rows: stateRows } = await pool.query(
+      `SELECT current_period FROM semester_state LIMIT 1`
+    );
+    const currentPeriod: string = stateRows[0]?.current_period ?? "CLASS_SETUP";
+    if (currentPeriod !== "REGISTRATION") {
+      return NextResponse.json(
+        { error: "PERIOD_CLOSED", message: `Registration is closed. Current period: ${currentPeriod}.` },
+        { status: 403 }
+      );
+    }
+  } catch {
+    // If we can't read the state, fall through and let sections load
+  }
+
   const session = await getSession();
   // dev-001 / dev-ins are fake — use student id 1 for DB queries
   const rawId = session?.id ?? "1";

@@ -294,6 +294,24 @@ export default function RegistrationPage() {
   async function confirmRegistration() {
     if (confirming || busyRowId) return;
 
+    // Enforce 2–4 course minimum before hitting the server
+    if (selectionCount < 2) {
+      pushToast({
+        kind: "error",
+        title: "Too few courses",
+        message: "You must select at least 2 courses before confirming.",
+      });
+      return;
+    }
+    if (selectionCount > 4) {
+      pushToast({
+        kind: "error",
+        title: "Too many courses",
+        message: "You can only register for up to 4 courses.",
+      });
+      return;
+    }
+
     setConfirming(true);
     pushToast({ kind: "info", title: "Confirming registration…", message: "Finalizing your selections." });
     try {
@@ -415,15 +433,14 @@ export default function RegistrationPage() {
                 <button
                   type="button"
                   onClick={() => void confirmRegistration()}
-                  disabled={confirming || busyRowId !== null || periodClosed}
+                  disabled={confirming || busyRowId !== null || periodClosed || selectionCount < 2 || selectionCount > 4}
                   className={[
                     "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-semibold transition",
                     selectionCount < 2 || selectionCount > 4 || periodClosed
-                      ? "bg-slate-100 text-slate-500"
+                      ? "bg-slate-100 text-slate-500 cursor-not-allowed"
                       : "bg-[#F07E62] text-white shadow-[0_12px_22px_rgba(240,126,98,0.25)] hover:brightness-[0.97] active:brightness-[0.95]",
                     confirming ? "opacity-70" : "",
                   ].join(" ")}
-                  aria-disabled={selectionCount < 2 || selectionCount > 4 || periodClosed}
                   title={selectionCount < 2 ? "Select at least 2 courses" : selectionCount > 4 ? "Max 4 courses" : "Confirm registration"}
                 >
                   {confirming ? "Confirming…" : "Confirm registration"}
