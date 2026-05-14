@@ -111,6 +111,16 @@ def create_missing_tables():
                 advanced_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS class_audit_flag (
+                class_id                   INTEGER PRIMARY KEY,
+                justification_requested    BOOLEAN NOT NULL DEFAULT FALSE,
+                justification_text         TEXT,
+                justification_submitted_at TIMESTAMP,
+                resolved                   BOOLEAN NOT NULL DEFAULT FALSE,
+                action_taken               TEXT
+            )
+        """))
         # Add missing columns to existing table (idempotent)
         for col_sql in [
             "ALTER TABLE semester_state ADD COLUMN IF NOT EXISTS semester_name VARCHAR(10) NOT NULL DEFAULT 'Spring'",
@@ -1335,7 +1345,19 @@ def get_roster(class_id: int, db: Session = Depends(get_db)):
 def submit_grades(data: dict, db: Session = Depends(get_db)):
     """POST /instructor/grades
     Submits grades and checks termination conditions (GPA < 2.0).
+    Grades can only be submitted during the GRADING period.
     """
+    # Period gate: only allow grade submission during GRADING
+    sem_state = db.execute(
+        text("SELECT current_period FROM semester_state LIMIT 1")
+    ).fetchone()
+    curr_period = sem_state[0] if sem_state else "CLASS_SETUP"
+    if curr_period != "GRADING":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Grades can only be submitted during the Grading period. Current period: {curr_period}."
+        )
+
     letter_to_number = {"A": 95, "B": 85, "C": 75, "D": 65, "F": 50}
     count = 0
     updated_students = set()
@@ -1440,7 +1462,16 @@ def get_class_waitlist(class_id: int, db: Session = Depends(get_db)):
 def handle_waitlist_action(class_id: int, data: dict, db: Session = Depends(get_db)):
     """PATCH /instructor/waitlist/{classId}
     Approve or deny a waitlist entry: {waitlist_id, action: "approve"|"deny"}
+    Only allowed during CLASS_RUNNING.
     """
+    sem_state = db.execute(text("SELECT current_period FROM semester_state LIMIT 1")).fetchone()
+    curr_period = sem_state[0] if sem_state else "CLASS_SETUP"
+    if curr_period != "CLASS_RUNNING":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Waitlist management is only available during the Class Running period. Current period: {curr_period}."
+        )
+
     waitlist_id = data.get("waitlist_id")
     action = data.get("action")
 
@@ -1469,6 +1500,15 @@ def handle_waitlist_action(class_id: int, data: dict, db: Session = Depends(get_
 
 @app.post("/instructor/warnings")
 def issue_warning(data: dict, db: Session = Depends(get_db)):
+    # Warnings can only be issued while classes are running
+    sem_state = db.execute(text("SELECT current_period FROM semester_state LIMIT 1")).fetchone()
+    curr_period = sem_state[0] if sem_state else "CLASS_SETUP"
+    if curr_period != "CLASS_RUNNING":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Warnings can only be issued during the Class Running period. Current period: {curr_period}."
+        )
+
     instructor_id = data.get("instructor_id")
     student_id = data.get("student_id")
     class_id = data.get("class_id")
@@ -1954,13 +1994,17 @@ def get_grade_audit(db: Session = Depends(get_db)):
                        ELSE 0.0
                    END
                ) AS class_gpa,
-               COUNT(e.id) AS student_count
+               COUNT(e.id) AS student_count,
+               COALESCE(f.justification_requested, FALSE) AS justification_requested,
+               COALESCE(f.justification_text, '') AS justification_text,
+               COALESCE(f.resolved, FALSE) AS resolved
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
+        LEFT JOIN class_audit_flag f ON f.class_id = cl.id
         WHERE e.status = 'COMPLETED' AND e.number_grade IS NOT NULL
-        GROUP BY cl.id, co.name, co.course_code, i.id, i.name
+        GROUP BY cl.id, co.name, co.course_code, i.id, i.name, f.justification_requested, f.justification_text, f.resolved
     """)
     rows = db.execute(query).fetchall()
     result = []
@@ -1971,17 +2015,18 @@ def get_grade_audit(db: Session = Depends(get_db)):
             if gpa > 3.5: flag_reason = "TOO_HIGH"
             elif gpa < 2.5: flag_reason = "TOO_LOW"
         result.append({
-            "class_id":               str(r.class_id),
-            "course_name":            r.course_name,
-            "section_id":             r.section_id,
-            "instructor_name":        r.instructor_name or "Staff",
-            "instructor_id":          str(r.instructor_id) if r.instructor_id else "",
-            "class_gpa":              gpa,
-            "student_count":          int(r.student_count),
-            "flagged":                flag_reason is not None,
-            "flag_reason":            flag_reason,
-            "justification_requested": False,
-            "resolved":               False,
+            "class_id":                str(r.class_id),
+            "course_name":             r.course_name,
+            "section_id":              r.section_id,
+            "instructor_name":         r.instructor_name or "Staff",
+            "instructor_id":           str(r.instructor_id) if r.instructor_id else "",
+            "class_gpa":               gpa,
+            "student_count":           int(r.student_count),
+            "flagged":                 flag_reason is not None,
+            "flag_reason":             flag_reason,
+            "justification_requested": bool(r.justification_requested),
+            "justification_text":      r.justification_text or "",
+            "resolved":                bool(r.resolved),
         })
     return result
 
@@ -1992,7 +2037,18 @@ def take_audit_action(data: dict, db: Session = Depends(get_db)):
     class_id = data.get("class_id")
     note = data.get("note", "")
 
-    if action in ("warn_instructor", "dismiss_instructor"):
+    if action == "request_justification":
+        # Persist the flag so the instructor can see it
+        db.execute(text("""
+            INSERT INTO class_audit_flag (class_id, justification_requested, resolved)
+            VALUES (:cid, TRUE, FALSE)
+            ON CONFLICT (class_id) DO UPDATE
+              SET justification_requested = TRUE, resolved = FALSE
+        """), {"cid": class_id})
+        db.commit()
+        return {"status": "JUSTIFICATION_REQUESTED", "message": "Instructor notified."}
+
+    if action in ("warn_instructor", "dismiss_instructor", "dismiss_flag"):
         instructor = db.execute(
             text("SELECT professor_id FROM class WHERE id = :cid"), {"cid": class_id}
         ).fetchone()
@@ -2002,19 +2058,92 @@ def take_audit_action(data: dict, db: Session = Depends(get_db)):
                     text("INSERT INTO warning (user_id, description) VALUES (:uid, :desc)"),
                     {"uid": instructor.professor_id, "desc": f"Grade Audit: {note or 'Flagged distribution'}"}
                 )
-            else:
+            elif action == "dismiss_instructor":
                 reg = db.execute(text("SELECT id FROM registrar LIMIT 1")).fetchone()
                 db.execute(
                     text("INSERT INTO fired (registrar_id, reason, instructor_id) VALUES (:rid, :reason, :iid)"),
                     {"rid": reg.id if reg else 1, "iid": instructor.professor_id, "reason": note or "Grade audit"}
                 )
-            db.commit()
+        # Mark flag as resolved
+        db.execute(text("""
+            INSERT INTO class_audit_flag (class_id, resolved, action_taken)
+            VALUES (:cid, TRUE, :act)
+            ON CONFLICT (class_id) DO UPDATE
+              SET resolved = TRUE, action_taken = :act
+        """), {"cid": class_id, "act": action})
+        db.commit()
 
-    is_resolved = action != "request_justification"
-    return {
-        "status": "RESOLVED" if is_resolved else "JUSTIFICATION_REQUESTED",
-        "message": "Flag resolved." if is_resolved else "Instructor notified.",
-    }
+    return {"status": "RESOLVED", "message": "Flag resolved."}
+
+@app.get("/instructor/audit-flags")
+def get_instructor_audit_flags(instructor_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """GET /instructor/audit-flags?instructor_id=X
+    Returns grade-audit flags where the registrar has requested a justification
+    from this instructor and no justification has been submitted yet.
+    """
+    if not instructor_id:
+        raise HTTPException(status_code=400, detail="instructor_id is required.")
+    try:
+        iid = int(instructor_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid instructor_id.")
+
+    rows = db.execute(text("""
+        SELECT cl.id AS class_id,
+               co.name AS course_name,
+               CONCAT(co.course_code::text, '-', cl.id::text) AS section_id,
+               f.justification_text,
+               f.justification_submitted_at
+        FROM class_audit_flag f
+        JOIN class cl ON cl.id = f.class_id
+        JOIN course co ON co.id = cl.course_id
+        WHERE cl.professor_id = :iid
+          AND f.justification_requested = TRUE
+          AND f.resolved = FALSE
+        ORDER BY cl.id
+    """), {"iid": iid}).fetchall()
+
+    return [
+        {
+            "class_id":    str(r.class_id),
+            "course_name": r.course_name,
+            "section_id":  r.section_id,
+            "justification_submitted": r.justification_text is not None and r.justification_text != "",
+            "justification_text": r.justification_text or "",
+        }
+        for r in rows
+    ]
+
+@app.post("/instructor/justification")
+def submit_justification(data: dict, db: Session = Depends(get_db)):
+    """POST /instructor/justification: { class_id, instructor_id, justification_text }
+    Instructor submits their written justification for a flagged grade distribution.
+    """
+    class_id = data.get("class_id")
+    instructor_id = data.get("instructor_id")
+    justification_text = (data.get("justification_text") or "").strip()
+
+    if not justification_text:
+        raise HTTPException(status_code=400, detail="Justification text is required.")
+
+    # Verify the instructor owns this class
+    owns = db.execute(
+        text("SELECT 1 FROM class WHERE id = :cid AND professor_id = :iid"),
+        {"cid": class_id, "iid": instructor_id}
+    ).fetchone()
+    if not owns:
+        raise HTTPException(status_code=403, detail="You are not the instructor of this class.")
+
+    db.execute(text("""
+        INSERT INTO class_audit_flag (class_id, justification_text, justification_submitted_at, justification_requested)
+        VALUES (:cid, :txt, NOW(), TRUE)
+        ON CONFLICT (class_id) DO UPDATE
+          SET justification_text = :txt,
+              justification_submitted_at = NOW()
+    """), {"cid": class_id, "txt": justification_text})
+    db.commit()
+
+    return {"status": "OK", "message": "Justification submitted. The Registrar will review it shortly."}
 
 @app.get("/registrar/graduation")
 def get_grad_applications(db: Session = Depends(get_db)):

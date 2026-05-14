@@ -28,6 +28,7 @@ const NAV: Record<UserRole, NavItem[]> = {
     { label: "My Classes", href: "/dashboard/instructor/classes" },
     { label: "Grade Submission", href: "/dashboard/instructor/grades" },
     { label: "Waitlist", href: "/dashboard/instructor/waitlist" },
+    { label: "Grade Audit", href: "/dashboard/instructor/audit" },
     { label: "File Complaint", href: "/dashboard/complaint" },
     { label: "AI Q&A", href: "/dashboard/instructor/ai" },
   ],
