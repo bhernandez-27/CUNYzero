@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
 import { Pool } from 'pg';
-//pool is a connection to the database
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> } 
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const resolvedParams = await params; 
+    const resolvedParams = await params;
     const classId = parseInt(resolvedParams.id);
 
     if (isNaN(classId)) {
@@ -28,12 +28,9 @@ export async function GET(
         co.course_code,
         co.description AS course_description,
         co.credits,
-        COALESCE(d.name, d.department_code, 'Unknown') AS department_name,
-        s.semester,
-        s.year,
         i.name AS professor_name,
         i.email AS professor_email,
-        -- Aggregate schedule into a JSON array
+        d.name AS department_name, -- 1. ADDED THIS LINE
         COALESCE(
           (SELECT json_agg(json_build_object(
             'day', cdm.day,
@@ -42,7 +39,6 @@ export async function GET(
           )) FROM "public".class_day_met cdm WHERE cdm.class_id = c.id),
           '[]'::json
         ) AS schedule,
-        -- Aggregate reviews into a JSON array
         COALESCE(
           (SELECT json_agg(json_build_object(
             'stars', r.stars,
@@ -52,9 +48,8 @@ export async function GET(
         ) AS reviews
       FROM "public".class c
       JOIN "public".course co ON c.course_id = co.id
+      JOIN "public".department d ON co.department_id = d.id -- 2. ADDED THIS JOIN
       LEFT JOIN "public".instructor i ON c.professor_id = i.id
-      LEFT JOIN "public".department d ON co.department_id = d.id
-      LEFT JOIN "public".semester s ON c.semester_id = s.id
       WHERE c.id = $1;
     `;
 

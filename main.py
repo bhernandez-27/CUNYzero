@@ -917,60 +917,88 @@ def get_sections(student_id: Optional[str] = None, db: Session = Depends(get_db)
 @app.get("/advisor/profile")
 def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(get_db)):
     try:
+        # Default to 1 if no ID provided, cast to int
         sid = int(student_id) if student_id else 1
     except (ValueError, TypeError):
         sid = 1
 
+    # 1. Fetch Student Basic Info & Major
+    student_info = db.execute(text("""
+        SELECT s.name, s.email, m.name as major_name, d.name as dept_name
+        FROM student s
+        LEFT JOIN major m ON s.major_id = m.id
+        LEFT JOIN department d ON m.department_id = d.id
+        WHERE s.id = :sid
+    """), {"sid": sid}).fetchone()
+
+    if not student_info:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # 2. Fetch All Enrollment History (excluding dropped)
+    # Added JOIN to department to ensure department_name is available for the UI
     rows = db.execute(text("""
-        SELECT co.course_code, co.name AS course_name, e.number_grade, co.credits,
-               cl.id AS section_id, i.name AS instructor
+        SELECT co.course_code, 
+               co.name AS course_name, 
+               e.number_grade, 
+               co.credits,
+               cl.id AS section_id, 
+               i.name AS instructor,
+               d.name AS department_name
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
+        JOIN department d ON co.department_id = d.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
         WHERE e.student_id = :sid AND e.status != 'DROPPED'
     """), {"sid": sid}).fetchall()
 
     def pct_to_letter(val):
-        if val is None: return None
-        if val >= 90: return "A"
-        if val >= 80: return "B"
-        if val >= 70: return "C"
-        if val >= 60: return "D"
+        if val is None: return "Pending"
+        v = float(val)
+        if v >= 90: return "A"
+        if v >= 80: return "B"
+        if v >= 70: return "C"
+        if v >= 60: return "D"
         return "F"
 
     def pct_to_points(val):
         if val is None: return None
-        if val >= 90: return 4.0
-        if val >= 80: return 3.0
-        if val >= 70: return 2.0
-        if val >= 60: return 1.0
+        v = float(val)
+        if v >= 90: return 4.0
+        if v >= 80: return 3.0
+        if v >= 70: return 2.0
+        if v >= 60: return 1.0
         return 0.0
 
     courses = []
     total_points = 0
     total_credits = 0
+    
     for r in rows:
         m = r._mapping
         num = float(m["number_grade"]) if m["number_grade"] is not None else None
         grade_pts = pct_to_points(num)
         credits = m["credits"]
+        
         courses.append({
             "course_code": str(m["course_code"]),
             "course_name": m["course_name"],
+            "department_name": m["department_name"], # Required for UI substring() call
             "section_id": str(m["section_id"]).zfill(2),
             "credits": credits,
             "grade": pct_to_letter(num),
             "grade_points": grade_pts,
             "instructor": m["instructor"] or "Staff",
         })
+        
         if grade_pts is not None:
             total_points += grade_pts * credits
             total_credits += credits
 
-    gpa = round(total_points / total_credits, 2) if total_credits > 0 else None
-    courses_completed = len([c for c in courses if c["grade"] is not None])
+    # Calculate GPA
+    cumulative_gpa = round(total_points / total_credits, 2) if total_credits > 0 else 0.0
 
+    # 3. Fetch Current Active Enrollments
     current_rows = db.execute(text("""
         SELECT co.name AS course_name, cl.id AS section_id,
                i.name AS instructor, co.credits
@@ -991,6 +1019,7 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
         for r in current_rows
     ]
 
+    # 4. Check for active warnings
     warning_count = db.execute(
         text("SELECT COUNT(*) FROM warning WHERE user_id = :sid AND cleared = false"),
         {"sid": sid}
@@ -998,16 +1027,18 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
 
     return {
         "student_id": str(sid),
-        "cumulative_gpa": gpa,
+        "student_name": student_info._mapping["name"],
+        "major": student_info._mapping["major_name"] or "Undeclared",
+        "cumulative_gpa": cumulative_gpa,
         "warning_count": int(warning_count),
-        "honor_roll": gpa is not None and gpa >= 3.5,
-        "courses_completed": courses_completed,
+        "honor_roll": cumulative_gpa >= 3.5,
+        "courses_completed": len([c for c in courses if c["grade_points"] is not None]),
         "current_enrollments": current_enrollments,
         "semesters": [
             {
                 "semester": "Spring",
                 "year": 2026,
-                "semester_gpa": gpa,
+                "semester_gpa": cumulative_gpa, # In a multi-semester app, this would be filtered
                 "courses": courses,
             }
         ],
@@ -1016,13 +1047,53 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
 @app.post("/registration/confirm")
 def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends(get_db)):
     sem_state = db.execute(
-        text("SELECT current_period FROM semester_state LIMIT 1")
+        text("SELECT current_period, semester_name, year FROM semester_state LIMIT 1")
     ).fetchone()
     curr_period = sem_state[0] if sem_state else "CLASS_SETUP"
+    curr_semester = sem_state[1] if sem_state else "Spring"
+    curr_year = sem_state[2] if sem_state else 2026
+    
     try:
         sid = int(data.student_id)
     except (ValueError, TypeError):
         sid = 1
+    
+    # check student termination
+    terminated = db.execute(
+        text("SELECT 1 FROM termination WHERE student_id = :sid"),
+        {"sid": sid}
+    ).fetchone()
+    
+    if terminated:
+        raise HTTPException(status_code=403, detail="Your enrollment has been terminated.")
+    
+    # check suspesnsion
+    suspension = db.execute(text("""
+        SELECT fine FROM student_suspension 
+        WHERE student_id = :sid 
+          AND suspension_semester = :sem
+          AND suspension_year = :yr
+        LIMIT 1
+    """), {"sid": sid, "sem": curr_semester, "yr": curr_year}).fetchone()
+    
+    if suspension:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "STUDENT_SUSPENDED",
+                "message": f"You are suspended this semester. Outstanding fine: ${suspension.fine:.2f}"
+            }
+        )
+
+    # Check re-registration eligibility for cancelled students
+    is_cancelled_student = db.execute(text("""
+        SELECT 1 FROM class_cancellation cc 
+        JOIN enrollment e ON cc.class_id = e.class_id 
+        WHERE e.student_id = :sid
+    """), {"sid": sid}).fetchone()
+    
+    if curr_period == "CLASS_RUNNING" and not is_cancelled_student:
+        raise HTTPException(status_code=403, detail="Registration is closed.")
 
     def parse_class_id(section_id: str):
         try:
@@ -1046,7 +1117,6 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
             enrolled_out.append(section_id)
             continue
 
-         # Get seat / waitlist counts
         cls = db.execute(
             text("""
                 SELECT max_num_students, num_students_enrolled,
@@ -1061,7 +1131,6 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
         seats_free = cls.max_num_students - cls.num_students_enrolled
 
         if seats_free > 0:
-            # Enroll the student
             db.execute(
                 text("""
                     INSERT INTO enrollment (student_id, class_id, status)
@@ -1076,7 +1145,6 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
             enrolled_out.append(section_id)
 
         elif cls.current_num_on_waitlist < cls.waitlist_max:
-            # Add to waitlist
             db.execute(
                 text("""
                     INSERT INTO enrollment (student_id, class_id, status)
@@ -1089,20 +1157,10 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
                 {"cid": class_id}
             )
             waitlisted_out.append(section_id)
-
         else:
             waitlisted_out.append(section_id)
 
     db.commit()
-
-    is_cancelled_student = db.execute(text("""
-        SELECT 1 FROM class_cancellation cc 
-        JOIN enrollment e ON cc.class_id = e.class_id 
-        WHERE e.student_id = :sid
-    """), {"sid": sid}).fetchone()
-    
-    if curr_period == "CLASS_RUNNING" and not is_cancelled_student:
-        raise HTTPException(status_code=403, detail="Registration is closed.")
 
     return {
         "status": "OK",
@@ -1110,8 +1168,6 @@ def confirm_registration(data: ConfirmRegistrationRequest, db: Session = Depends
         "waitlisted": waitlisted_out,
         "errors": []
     }
- 
- #Instructor endpoints
 
 @app.get("/instructor/classes")
 def get_instructor_classes(instructor_id: int, db: Session = Depends(get_db)):
@@ -1228,22 +1284,73 @@ def get_roster(class_id: int, db: Session = Depends(get_db)):
 @app.post("/instructor/grades")
 def submit_grades(data: dict, db: Session = Depends(get_db)):
     """POST /instructor/grades
-    Submits grades batch: { class_id, grades: [{enrollment_id, grade}] }
-    grade is a letter (A/B/C/D/F) — stored as numeric midpoint.
+    Submits grades and checks termination conditions (GPA < 2.0).
     """
     letter_to_number = {"A": 95, "B": 85, "C": 75, "D": 65, "F": 50}
     count = 0
+    updated_students = set()
+    
     for entry in data.get("grades", []):
         numeric = letter_to_number.get(str(entry.get("grade", "")).upper())
         if numeric is None:
             continue
+        
+        enrollment_id = entry["enrollment_id"]
+        enrollment = db.execute(
+            text("SELECT student_id FROM enrollment WHERE id = :eid"),
+            {"eid": enrollment_id}
+        ).fetchone()
+        
+        if enrollment:
+            updated_students.add(enrollment.student_id)
+        
         db.execute(
             text("UPDATE enrollment SET number_grade = :g, status = 'COMPLETED' WHERE id = :eid"),
-            {"g": numeric, "eid": entry["enrollment_id"]}
+            {"g": numeric, "eid": enrollment_id}
         )
         count += 1
+    
+
+    for sid in updated_students:
+        gpa_row = db.execute(text("""
+            SELECT 
+                COALESCE(SUM(e.number_grade * COALESCE(c.credits, 3)) / 
+                        NULLIF(SUM(COALESCE(c.credits, 3)), 0), 0) as gpa
+            FROM enrollment e
+            LEFT JOIN class cl ON e.class_id = cl.id
+            LEFT JOIN course c ON cl.course_id = c.id
+            WHERE e.student_id = :sid 
+              AND e.status = 'COMPLETED'
+              AND e.number_grade IS NOT NULL
+        """), {"sid": sid}).fetchone()
+        
+        gpa = float(gpa_row.gpa) if gpa_row and gpa_row.gpa else 0.0
+        
+        # Check if already terminated
+        already_terminated = db.execute(
+            text("SELECT 1 FROM termination WHERE student_id = :sid"),
+            {"sid": sid}
+        ).fetchone()
+        
+        # Terminate if GPA < 2.0 and not already terminated
+        if gpa < 2.0 and not already_terminated:
+            db.execute(
+                text("INSERT INTO termination (student_id, reason) VALUES (:sid, :reason)"),
+                {"sid": sid, "reason": f"GPA below 2.0 ({gpa:.2f})"}
+            )
+            
+            #  warning record for the student's transcript
+            db.execute(
+                text("INSERT INTO warning (user_id, description, cleared) VALUES (:uid, :desc, FALSE)"),
+                {"uid": sid, "desc": f"Terminated: GPA below 2.0 ({gpa:.2f})"}
+            )
+    
     db.commit()
-    return {"status": "OK", "graded_count": count, "message": f"{count} grade(s) submitted successfully."}
+    return {
+        "status": "OK",
+        "graded_count": count,
+        "message": f"{count} grade(s) submitted successfully."
+    }
 
 @app.get("/instructor/waitlist/{class_id}")
 def get_class_waitlist(class_id: int, db: Session = Depends(get_db)):
@@ -1319,6 +1426,7 @@ def issue_warning(data: dict, db: Session = Depends(get_db)):
 
     if not reason:
         raise HTTPException(status_code=400, detail="Reason is required.")
+    
     owns = db.execute(text("SELECT 1 FROM class WHERE id = :cid AND professor_id = :iid"), 
                       {"cid": class_id, "iid": instructor_id}).fetchone()
     if not owns:
@@ -1335,7 +1443,7 @@ def issue_warning(data: dict, db: Session = Depends(get_db)):
     )
     db.commit() 
 
-    #Check for Suspension
+    # Check for Suspension
     count = db.execute(
         text("SELECT COUNT(*) FROM warning WHERE user_id = :uid AND cleared = false"), 
         {"uid": student_id}
@@ -1346,9 +1454,29 @@ def issue_warning(data: dict, db: Session = Depends(get_db)):
             text("SELECT 1 FROM student_suspension WHERE student_id = :sid LIMIT 1"),
             {"sid": student_id}
         ).fetchone()
+        
         if not already_suspended:
-            susp_season = "FALL"
-            susp_year = 2026
+    
+            sem_state = db.execute(
+                text("SELECT semester_name, year FROM semester_state LIMIT 1")
+            ).fetchone()
+            
+       
+            if sem_state:
+                curr_sem = sem_state[0]
+                curr_year = sem_state[1]
+                
+                # Calculate next semester
+                if curr_sem == "Spring":
+                    susp_season = "Fall"
+                    susp_year = curr_year
+                else:
+                    susp_season = "Spring"
+                    susp_year = curr_year + 1
+            else:
+                susp_season = "Fall"
+                susp_year = 2026
+            
             db.execute(text("""
                 INSERT INTO student_suspension (student_id, reason, fine, suspension_semester, suspension_year)
                 VALUES (:sid, :reason, :fine, :season, :yr)
@@ -2040,6 +2168,61 @@ def advance_semester(db: Session = Depends(get_db)):
                         "yr": susp_year,
                     })
                     instructors_suspended += 1
+
+    if next_state == "GRADING":
+        students = db.execute(text("""
+            SELECT DISTINCT s.id,
+                COALESCE(SUM(e.number_grade * COALESCE(c.credits, 3)) / 
+                        NULLIF(SUM(COALESCE(c.credits, 3)), 0), 0) as gpa
+            FROM student s
+            LEFT JOIN enrollment e ON s.id = e.student_id 
+              AND e.status = 'COMPLETED' AND e.number_grade IS NOT NULL
+            LEFT JOIN class cl ON e.class_id = cl.id
+            LEFT JOIN course c ON cl.course_id = c.id
+            WHERE s.status != 'TERMINATED'
+            GROUP BY s.id
+        """)).fetchall()
+        
+        honor_roll_count = 0
+        for student in students:
+            gpa = float(student.gpa) if student.gpa else 0.0
+            
+            # Check if qualifies for honor roll (GPA >= 3.5)
+            if gpa >= 3.5:
+                already = db.execute(
+                    text("""
+                        SELECT 1 FROM student_honor_roll 
+                        WHERE student_id = :sid AND academic_year = :yr AND semester = :sem
+                    """),
+                    {"sid": student.id, "yr": yr, "sem": sem_name}
+                ).fetchone()
+                
+                if not already:
+                    db.execute(
+                        text("""
+                            INSERT INTO student_honor_roll (student_id, academic_year, semester)
+                            VALUES (:sid, :yr, :sem)
+                        """),
+                        {"sid": student.id, "yr": yr, "sem": sem_name}
+                    )
+                    honor_roll_count += 1
+                    
+                    # Remove active warning (if any)
+                    warning_to_clear = db.execute(
+                        text("""
+                            SELECT id FROM warning 
+                            WHERE user_id = :uid AND cleared = FALSE
+                            ORDER BY id ASC 
+                            LIMIT 1
+                        """),
+                        {"uid": student.id}
+                    ).fetchone()
+                    
+                    if warning_to_clear:
+                        db.execute(
+                            text("UPDATE warning SET cleared = TRUE WHERE id = :wid"),
+                            {"wid": warning_to_clear.id}
+                        )
 
     db.commit()
 
