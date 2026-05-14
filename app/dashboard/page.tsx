@@ -329,18 +329,7 @@ export default async function DashboardPage() {
                     Welcome back, {fullName}!
                   </div>
                   <div className="mt-2 text-sm text-slate-600 max-w-xl">
-                    New French speaking classes are available. Further in France for B1 and B2 levels. Learn more.
-                  </div>
-                  <div className="mt-4 flex items-center gap-3">
-                    <Link
-                      href="/"
-                      className="inline-flex items-center justify-center rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 transition"
-                    >
-                      Buy Lesson
-                    </Link>
-                    <a href="#" className="text-sm font-semibold text-slate-700 hover:text-slate-900">
-                      Learn more
-                    </a>
+                    Check your enrolled classes, grades, and registration status below.
                   </div>
                 </div>
                 <div className="md:justify-self-end">
@@ -414,70 +403,6 @@ export default async function DashboardPage() {
               )}
             </div>
 
-            {/* Lessons table */}
-            <div className="mt-6 rounded-2xl bg-white border border-black/5 shadow-sm p-6">
-              <div className="flex items-center justify-between gap-4">
-                <div className="text-sm font-semibold text-slate-900">Lessons</div>
-                <a href="#" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
-                  View all →
-                </a>
-              </div>
-
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs text-slate-500">
-                      <th className="py-3 pr-4 font-semibold">Class</th>
-                      <th className="py-3 pr-4 font-semibold">Teacher Name</th>
-                      <th className="py-3 pr-4 font-semibold">Members</th>
-                      <th className="py-3 pr-4 font-semibold">Starting</th>
-                      <th className="py-3 pr-4 font-semibold">Material</th>
-                      <th className="py-3 font-semibold">Payment</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {classes.slice(0, 5).map((c) => (
-                      <tr key={c.id} className="text-slate-700">
-                        <td className="py-3 pr-4">
-                          <div className="font-semibold text-slate-900 truncate max-w-[220px]">
-                            {c.course_code}
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4 truncate">{c.professor_name || "TBA"}</td>
-                        <td className="py-3 pr-4">
-                          <div className="flex -space-x-2">
-                            {[0, 1, 2].map((i) => (
-                              <div
-                                key={i}
-                                className="h-7 w-7 rounded-full ring-2 ring-white bg-linear-to-br from-slate-200 to-slate-300"
-                                aria-hidden="true"
-                              />
-                            ))}
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4 text-slate-600">
-                          {new Date().toLocaleDateString()}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <a
-                            href="#"
-                            className="inline-flex items-center justify-center rounded-lg bg-slate-50 border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                          >
-                            Download
-                          </a>
-                        </td>
-                        <td className="py-3">
-                          <span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700">
-                            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                            Done
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </>
         }
       />

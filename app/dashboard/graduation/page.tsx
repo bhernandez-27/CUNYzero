@@ -169,10 +169,6 @@ function ReadyView({
           />
         </div>
 
-        <div className="mt-2 flex justify-between text-xs text-slate-400">
-          <span>0</span>
-          <span>{REQUIRED} required</span>
-        </div>
       </div>
 
       {/* Eligibility badge */}

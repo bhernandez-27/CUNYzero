@@ -382,13 +382,32 @@ def get_student_status(student_id: Optional[str] = None, db: Session = Depends(g
         sid = 1
 
     student = db.execute(
-        text("SELECT gpa FROM student WHERE id = :id"),
+        text("SELECT id FROM student WHERE id = :id"),
         {"id": sid}
     ).fetchone()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    gpa = float(student.gpa) if student.gpa is not None else 0.0
+    # Compute GPA dynamically from actual completed grades (same scale as grades page)
+    grade_rows = db.execute(text("""
+        SELECT co.credits, e.number_grade
+        FROM enrollment e
+        JOIN class cl ON e.class_id = cl.id
+        JOIN course co ON cl.course_id = co.id
+        WHERE e.student_id = :sid AND e.status IN ('ENROLLED', 'COMPLETED')
+          AND e.number_grade IS NOT NULL
+    """), {"sid": sid}).fetchall()
+
+    def pct_to_points(v):
+        if v >= 90: return 4.0
+        if v >= 80: return 3.0
+        if v >= 70: return 2.0
+        if v >= 60: return 1.0
+        return 0.0
+
+    total_pts = sum(pct_to_points(float(r.number_grade)) * r.credits for r in grade_rows)
+    total_cr  = sum(r.credits for r in grade_rows)
+    gpa = round(total_pts / total_cr, 2) if total_cr > 0 else 0.0
 
     warning_count = int(db.execute(
         text("SELECT COUNT(*) FROM warning WHERE user_id = :id AND cleared = false"),
@@ -611,10 +630,15 @@ def get_student_grades(student_id: Optional[str] = None, db: Session = Depends(g
 
     gpa = round(total_points / total_credits, 2) if total_credits > 0 else 0.0
 
+    warning_count = db.execute(
+        text("SELECT COUNT(*) FROM warning WHERE user_id = :uid AND cleared = false"),
+        {"uid": uid}
+    ).scalar() or 0
+
     return {
         "student_id": str(uid),
         "cumulative_gpa": gpa,
-        "warning_count": 0,
+        "warning_count": warning_count,
         "honor_roll": gpa >= 3.5,
         "courses_completed": len([c for c in courses if c['grade'] != "Pending"]),
         "semesters": [
@@ -1318,11 +1342,24 @@ def issue_warning(data: dict, db: Session = Depends(get_db)):
     ).scalar()
 
     if count >= 3:
-        db.execute(text("""
-            INSERT INTO student_suspension (student_id, start_semester, fine_amount) 
-            VALUES (:sid, 'FALL_2026', 500.00)
-        """), {"sid": student_id})
-        db.commit()
+        already_suspended = db.execute(
+            text("SELECT 1 FROM student_suspension WHERE student_id = :sid LIMIT 1"),
+            {"sid": student_id}
+        ).fetchone()
+        if not already_suspended:
+            susp_season = "FALL"
+            susp_year = 2026
+            db.execute(text("""
+                INSERT INTO student_suspension (student_id, reason, fine, suspension_semester, suspension_year)
+                VALUES (:sid, :reason, :fine, :season, :yr)
+            """), {
+                "sid": student_id,
+                "reason": "Accumulated 3 warnings",
+                "fine": 500.00,
+                "season": susp_season,
+                "yr": susp_year,
+            })
+            db.commit()
 
     return {"status": "issued", "message": f"Warning issued. Total active: {count}"}
 
@@ -1897,12 +1934,20 @@ def advance_semester(db: Session = Depends(get_db)):
         {"ns": next_state, "sn": sem_name, "yr": yr},
     )
     failed_twice = db.execute(text("""
-    SELECT student_id FROM enrollment 
-    WHERE number_grade < 60 
-    GROUP BY student_id, class_id HAVING COUNT(*) >= 2
-""")).fetchall()
+        SELECT student_id FROM enrollment
+        WHERE number_grade < 60
+        GROUP BY student_id, class_id HAVING COUNT(*) >= 2
+    """)).fetchall()
     for r in failed_twice:
-        db.execute(text("UPDATE student SET status = 'TERMINATED' WHERE id = :sid"), {"sid": r.student_id})
+        already = db.execute(
+            text("SELECT 1 FROM termination WHERE student_id = :sid"),
+            {"sid": r.student_id}
+        ).fetchone()
+        if not already:
+            db.execute(
+                text("INSERT INTO termination (student_id, reason) VALUES (:sid, :reason)"),
+                {"sid": r.student_id, "reason": "Failed the same course twice"}
+            )
 
 
     cancellation_report: list[dict] = []

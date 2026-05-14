@@ -22,10 +22,11 @@ function toHHMM(t: string): string {
 
 function numericToLetter(grade: number | null): string | null {
   if (grade == null) return null;
-  if (grade >= 4.0) return "A";
-  if (grade >= 3.0) return "B";
-  if (grade >= 2.0) return "C";
-  if (grade >= 1.0) return "D";
+  // Grades stored as 0–100 percentages
+  if (grade >= 90) return "A";
+  if (grade >= 80) return "B";
+  if (grade >= 70) return "C";
+  if (grade >= 60) return "D";
   return "F";
 }
 
@@ -78,6 +79,7 @@ export async function GET(req: Request) {
          JOIN class c2 ON e2.class_id = c2.id
          WHERE e2.student_id = $1
            AND c2.course_id = co.id
+           AND e2.status = 'COMPLETED'
            AND e2.number_grade IS NOT NULL
          ORDER BY e2.id DESC
          LIMIT 1) AS previous_grade
