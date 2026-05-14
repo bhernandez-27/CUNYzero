@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
+//determines the phase of the application
 type Phase = "form" | "success";
 
+//this is the main function that will render the page
 export default function ApplyStudentPage() {
-  const [phase, setPhase] = useState<Phase>("form");
-  const [applicationId, setApplicationId] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>("form"); 
+  const [applicationId, setApplicationId] = useState<string | null>(null); 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,7 +20,7 @@ export default function ApplyStudentPage() {
     const priorGpa = Number(fd.get("priorGpa"));
     const password = String(fd.get("password") ?? "");
     const confirm = String(fd.get("confirm") ?? "");
-
+    //creates a payload object with the data from the form
     const payload = {
       fullName: String(fd.get("fullName") ?? "").trim(),
       email: String(fd.get("email") ?? "").trim(),

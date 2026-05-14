@@ -61,7 +61,7 @@ export default async function ClassDetailsPage({
               {classData.course_name}
             </h1>
             <p className="text-xl text-gray-600 mt-1">
-              {classData.department_name.substring(0, 4).toUpperCase()} {classData.course_code} • {classData.credits} Credits
+              {(classData.department_name ?? "").substring(0, 4).toUpperCase()} {classData.course_code} • {classData.credits} Credits
             </p>
           </div>
           <div className="text-right">

@@ -11,7 +11,7 @@ import { findScheduleConflicts, hasScheduleConflict, rowMeetsTimeWindow, toMinut
 import type { RegistrationConfirmResponse, RegistrationSectionDTO } from "@/lib/registration/apiTypes";
 
 export default function RegistrationPage() {
-  const [rows, setRows] = useState<SectionRow[]>([]);
+  const [rows, setRows] = useState<SectionRow[]>([]); 
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);

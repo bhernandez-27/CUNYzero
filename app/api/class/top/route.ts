@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Pool } from 'pg'; 
-
+//pool is a connection to the database
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
@@ -33,7 +33,7 @@ export async function GET() {
       LIMIT 3;
     `;
 
-    const { rows } = await pool.query(query);
+    const { rows } = await pool.query(query); //awaits the query to be executed
     
     // Convert numeric strings returned by Postgres back to floats
     const formattedRows = rows.map(row => ({
@@ -42,7 +42,7 @@ export async function GET() {
       average_gpa: parseFloat(row.average_gpa)
     }));
 
-    return NextResponse.json(formattedRows);
+    return NextResponse.json(formattedRows); 
   } catch (error) {
     console.error("Error fetching top classes:", error);
     return NextResponse.json({ error: "Failed to fetch top classes" }, { status: 500 });

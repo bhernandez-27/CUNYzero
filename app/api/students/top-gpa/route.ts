@@ -26,10 +26,10 @@ export async function GET() {
 
     const { rows } = await pool.query(query);
 
-    const formatted = rows.map((row) => ({
+    const formatted = rows.map((row) => ({ 
       id: Number(row.id),
       name: row.name,
-      gpa: row.gpa === null ? null : parseFloat(row.gpa),
+      gpa: row.gpa === null ? null : parseFloat(row.gpa), //converts the GPA to a float
     }));
 
     return NextResponse.json(formatted);

@@ -1,28 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthPythonBaseUrl } from "@/lib/auth/proxyUpstream";
 
-/*
- * Python must implement:
- *
- * GET {AUTH_PYTHON_BASE_URL}/registrar/applications
- *   Success (200): ApplicationsDTO
- *   {
- *     students: StudentApplicationDTO[],
- *     instructors: InstructorApplicationDTO[]
- *   }
- *
- * PATCH {AUTH_PYTHON_BASE_URL}/registrar/applications
- *   Body: { application_id, type, decision, justification? }
- *   Success (200): { status: "APPROVED" | "REJECTED", message: string }
- *   Justification required (422): { error: "JUSTIFICATION_REQUIRED", message: string }
- *
- * Business rules Python enforces:
- *   - Rejecting a student with prior_gpa > 3.0 when enrollment quota is not full
- *     requires a written justification (return 422 if missing).
- *   - Instructor rejections never require justification.
- *   - On approval, Python provisions an account and emails credentials.
- */
-
+//specific data types for the applications
 export type StudentApplicationDTO = {
   application_id: string;
   full_name: string;
@@ -56,12 +35,12 @@ export async function GET(req: Request) {
   if (!base) {
     return NextResponse.json(getMockApplications());
   }
-
+  //Get the cookie from the request and attach to python
   const cookie = req.headers.get("cookie");
   const headers: Record<string, string> = { Accept: "application/json" };
   if (cookie) headers.Cookie = cookie;
 
-  let upstream: Response;
+  let upstream: Response; 
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 10_000);
@@ -72,10 +51,10 @@ export async function GET(req: Request) {
     return NextResponse.json(getMockApplications());
   }
 
-  const body = await upstream.text();
+  const body = await upstream.text(); //read python's response and then build a new response
   return new NextResponse(body, {
-    status: upstream.status,
-    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    status: upstream.status, 
+    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" }, 
   });
 }
 

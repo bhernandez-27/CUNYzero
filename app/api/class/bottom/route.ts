@@ -4,10 +4,10 @@ import { Pool } from "pg";
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
-// This API endpoint returns the bottom 3 classes based on the average rating and GPA
+// This endpoint returns the bottom 3 classes based on the average rating and GPA
 // It joins the class, course, instructor, semester, review, enrollment, and department tables
 // It groups by the class id, course name, course code, professor name, semester, year, and department code
-// It has a having clause to ensure that the class has at least one review
+// at least one review
 // It orders by the average rating and GPA in ascending order
 // It limits the results to the bottom 3 classes
 // It returns the results in a JSON array
@@ -41,7 +41,7 @@ export async function GET() {
       LIMIT 3;
     `;
 
-    const { rows } = await pool.query(query);
+    const { rows } = await pool.query(query); //awaits the query to be executed
 
     const formattedRows = rows.map((row) => ({
       ...row,

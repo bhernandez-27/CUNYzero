@@ -14,15 +14,11 @@ function getGeminiApiKey(): string | null {
 }
 
 // Returns the model name to use for Gemini requests.
-// Supports overriding via GEMINI_MODEL; strips a leading "models/" if provided.
 function getGeminiModel(): string {
-  // Default to a model that is available for generateContent on v1beta.
-  // Allow override via GEMINI_MODEL in .env.local.
   return (process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash").replace(/^models\//, "");
 }
 
 // Chat endpoint that currently uses Gemini as the fallback LLM.
-// RAG integration can later be added before the Gemini call without changing the client contract.
 export async function POST(req: Request) {
   // Fail fast if the server is not configured with a key.
   const apiKey = getGeminiApiKey();
@@ -34,6 +30,7 @@ export async function POST(req: Request) {
   }
 
   // Validate request JSON.
+  //we expect json object with message and role to be sent from the frontend
   let body: unknown;
   try {
     body = await req.json();
@@ -95,10 +92,10 @@ export async function POST(req: Request) {
     // Keep requests bounded so the UI can fail gracefully.
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 15_000);
-    upstream = await fetch(url, {
+    upstream = await fetch(url, { //sends the request to the Gemini API
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      headers: { "Content-Type": "application/json" }, 
+      body: JSON.stringify({ 
         contents: [
           {
             role: "user",
@@ -120,7 +117,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // Surface upstream errors to help debugging misconfiguration (model, key, quotas).
+  //if the request to the Gemini API is not successful, return an error
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
     return NextResponse.json(
@@ -134,24 +131,24 @@ export async function POST(req: Request) {
     );
   }
 
-  // Parse and extract the first candidate's text parts.
+  //parse the response from the Gemini API
   let data: unknown;
   try {
-    data = await upstream.json();
-  } catch {
+    data = await upstream.json(); 
+  } catch { //if the response is not valid JSON, return an error
     return NextResponse.json(
       { error: "gemini_bad_response", message: "Gemini response was not valid JSON." },
       { status: 502 },
     );
   }
-
+  
   const d = data as GeminiResponse;
   const reply = (d.candidates?.[0]?.content?.parts ?? [])
     .map((p) => (typeof p.text === "string" ? p.text : ""))
     .join("")
     .trim();
 
-  // Treat empty output as an error so the UI can display a useful message.
+  // Treat empty output as an error so the UI can display a message
   if (!reply) {
     return NextResponse.json(
       { error: "gemini_empty", message: "Gemini returned an empty response." },

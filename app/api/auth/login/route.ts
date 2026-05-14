@@ -4,7 +4,7 @@ import { getAuthPythonBaseUrl } from "@/lib/auth/proxyUpstream";
 export async function POST(req: Request) {
   let body: unknown;
   try {
-    body = await req.json();
+    body = await req.json(); 
   } catch {
     return NextResponse.json(
       { error: "invalid_json", message: "Request body must be JSON." },
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-
+  //sanitizes the body of the request
   const { email, password, remember } = body as Record<string, unknown>;
   if (typeof email !== "string" || typeof password !== "string") {
     return NextResponse.json(
@@ -26,43 +26,23 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-
+  //get the base url of the python auth service
   const base = getAuthPythonBaseUrl();
   if (!base) {
-    // Dev-mode mock login — maps well-known credentials to each role so the
-    // full UI can be tested without the Python backend running.
-    const DEV_ACCOUNTS: Record<string, { id: string; name: string; role: string }> = {
-      "student@dev.com":    { id: "dev-001", name: "Dev Student",    role: "student" },
-      "instructor@dev.com": { id: "dev-ins", name: "Dev Instructor", role: "instructor" },
-      "registrar@dev.com":  { id: "dev-reg", name: "Dev Registrar",  role: "registrar" },
-    };
-    const account = DEV_ACCOUNTS[email.trim().toLowerCase()];
-    if (!account || password !== "password") {
-      return NextResponse.json(
-        { error: "invalid_credentials", message: "Invalid email or password." },
-        { status: 401 },
-      );
-    }
-    const maxAge = Boolean(remember) ? 60 * 60 * 24 * 30 : 60 * 60 * 24;
-    const res = NextResponse.json({ ...account, message: "Signed in (dev mode)." });
-    res.cookies.set("college0_user", JSON.stringify(account), {
-      httpOnly: true,
-      path: "/",
-      sameSite: "lax",
-      maxAge,
-      secure: false,
-    });
-    return res;
+    return NextResponse.json(
+      { error: "service_unavailable", message: "Auth service is not configured." },
+      { status: 503 },
+    );
   }
-
+  //Get the cookie from the request
   const forwardCookie = req.headers.get("cookie");
   const fetchHeaders: Record<string, string> = {
     "Content-Type": "application/json",
-    Accept: "application/json",
+    Accept: "application/json", 
   };
-  if (forwardCookie) fetchHeaders.Cookie = forwardCookie;
+  if (forwardCookie) fetchHeaders.Cookie = forwardCookie; 
 
-  let upstream: Response;
+  let upstream: Response; //the response from the python auth service
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 15_000);
@@ -80,7 +60,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // Read the body once as text so we can both forward it and parse it.
+  // read python's response and then build a new response
   const rawText = await upstream.text();
   const contentType = upstream.headers.get("content-type") ?? "application/json";
 
@@ -99,25 +79,17 @@ export async function POST(req: Request) {
     if (single) res.headers.append("Set-Cookie", single);
   }
 
-  // On success, parse the response to extract user info and set our session cookie.
+  // On success, extract user info and set the session cookie.
   if (upstream.ok && contentType.includes("application/json")) {
     try {
       const data = JSON.parse(rawText) as Record<string, unknown>;
 
-      // Email-based role fallback for when Python hasn't implemented real auth yet.
-      const DEV_ROLE_MAP: Record<string, { id: string; name: string; role: string }> = {
-        "student@dev.com":    { id: "dev-001", name: "Dev Student",    role: "student" },
-        "instructor@dev.com": { id: "dev-ins", name: "Dev Instructor", role: "instructor" },
-        "registrar@dev.com":  { id: "dev-reg", name: "Dev Registrar",  role: "registrar" },
-      };
-      const devAccount = DEV_ROLE_MAP[email.trim().toLowerCase()];
-
-      const role = (data.role as string) ?? devAccount?.role ?? "student";
-      const name = (data.name as string) ?? devAccount?.name ?? (data.email as string) ?? "User";
-      const id = String(data.id ?? devAccount?.id ?? "");
+      const role = (data.role as string) ?? "student";
+      const name = (data.name as string) ?? (data.email as string) ?? "User";
+      const id = String(data.id ?? "");
       const applicant = (data.applicant && typeof data.applicant === "object") ? data.applicant : undefined;
-
-      const maxAge = Boolean(remember) ? 60 * 60 * 24 * 30 : 60 * 60 * 24;
+      //set cookie max age
+      const maxAge = Boolean(remember) ? 60 * 60 * 24 * 30 : 60 * 60 * 24; 
       res.cookies.set(
         "college0_user",
         JSON.stringify(applicant ? { id, name, role, applicant } : { id, name, role }),
@@ -134,5 +106,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return res;
+  return res; //returns the response from the upstream
 }

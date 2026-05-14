@@ -1,12 +1,12 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-
+//metadata for the page for SEO
 export const metadata: Metadata = {
   title: "Public dashboard | College0",
   description:
     "Program overview, top and lowest rated classes, and top GPA students — no login required.",
 };
-
+//these are the types for the data that is expected to be returned from the API
 type TopClass = {
   id: number;
   course_name: string;
@@ -23,13 +23,13 @@ type TopStudent = {
   name: string;
   gpa: number | null;
 };
-
+//this function makes a promise that will deliver data that matches the TopClass type
 async function getTopClasses(): Promise<TopClass[]> {
-  const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
-  const res = await fetch(`${baseUrl}/api/class/top`, { cache: "no-store" });
+  const baseUrl = process.env.MAIN_URL || "http://localhost:3000"; //this is where the data is coming from
+  const res = await fetch(`${baseUrl}/api/class/top`, { cache: "no-store" }); //this is the endpoint that is being called
   if (!res.ok) return [];
-  return res.json();
-}
+  return res.json();//returns the data in json format
+} 
 
 async function getBottomClasses(): Promise<TopClass[]> {
   const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
@@ -37,16 +37,16 @@ async function getBottomClasses(): Promise<TopClass[]> {
   if (!res.ok) return [];
   return res.json();
 }
-
+//this function makes a promise that will deliver data that matches the TopStudent type
 async function getTopGpaStudents(): Promise<TopStudent[]> {
   const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
   const res = await fetch(`${baseUrl}/api/students/top-gpa`, { cache: "no-store" });
   if (!res.ok) return [];
   return res.json();
 }
-
+//this is the main function that will render the page
 export default async function PublicDashboardPage() {
-  const topClasses = await getTopClasses();
+  const topClasses = await getTopClasses(); 
   const bottomClasses = await getBottomClasses();
   const topStudents = await getTopGpaStudents();
 
@@ -112,7 +112,7 @@ export default async function PublicDashboardPage() {
           </div>
         ) : (
           <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {topClasses.map((c) => (
+            {topClasses.map((c) => ( //this is a map function that will iterate over the topClasses array and return a list of classes 
               <li key={c.id}>
                 <Link
                   href={`/class/${c.id}`}

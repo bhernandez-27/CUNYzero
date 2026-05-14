@@ -1,24 +1,14 @@
 import { NextResponse } from "next/server";
 
-/**
- * Base URL of the Python auth service (no trailing slash).
- * Example: http://localhost:8000
- *
- * Python should expose (same paths relative to this base):
- * - POST /auth/login    — body: { email, password, remember?: boolean }
- * - POST /auth/register — body: { email, password, name, role: "student" | "instructor" }
- * - POST /auth/logout   — body: optional {}, may use session cookie
- *
- * Responses: JSON is proxied as-is. Use HTTP status 4xx/5xx for errors with JSON like
- * { "error": "invalid_credentials", "message": "..." }.
- * For cookie sessions, return Set-Cookie on success; Next forwards those headers to the browser.
- */
+//gets the base URL for the authentication service
 export function getAuthPythonBaseUrl(): string | null {
   const url = process.env.AUTH_PYTHON_BASE_URL?.trim();
   if (!url) return null;
   return url.replace(/\/+$/, "");
 }
 
+//When python logs a user in, it sends a cookie to next js and not the browser
+//this function appends the cookie to the response
 function appendForwardedSetCookie(upstream: Response, res: NextResponse) {
   const h = upstream.headers as Headers & { getSetCookie?: () => string[] };
   if (typeof h.getSetCookie === "function") {
@@ -31,6 +21,7 @@ function appendForwardedSetCookie(upstream: Response, res: NextResponse) {
   if (single) res.headers.append("Set-Cookie", single);
 }
 
+//this function proxies the JSON to the authentication service
 export async function proxyJsonToPython(path: string, json: unknown, incoming?: Request): Promise<NextResponse> {
   const base = getAuthPythonBaseUrl();
   if (!base) {
@@ -49,13 +40,13 @@ export async function proxyJsonToPython(path: string, json: unknown, incoming?: 
     );
   }
 
-  const target = `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const target = `${base}${path.startsWith("/") ? path : `/${path}`}`;  //builds the target URL
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+  const headers: Record<string, string> = { //sets the headers for the request
+    "Content-Type": "application/json", //sets the content type to JSON
     Accept: "application/json",
   };
-  const cookie = incoming?.headers.get("cookie");
+  const cookie = incoming?.headers.get("cookie"); //gets the cookie from the incoming request
   if (cookie) headers.Cookie = cookie;
 
   let upstream: Response;

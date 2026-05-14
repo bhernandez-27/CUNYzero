@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
 import { Pool } from 'pg';
-
+//pool is a connection to the database
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> } // <-- 1. Change type to Promise
+  { params }: { params: Promise<{ id: string }> } 
 ) {
   try {
-    const resolvedParams = await params; // <-- 2. Await the params
-    const classId = parseInt(resolvedParams.id); // <-- 3. Use resolvedParams
+    const resolvedParams = await params; 
+    const classId = parseInt(resolvedParams.id);
 
     if (isNaN(classId)) {
       return NextResponse.json({ error: "Invalid class ID" }, { status: 400 });
@@ -28,6 +28,9 @@ export async function GET(
         co.course_code,
         co.description AS course_description,
         co.credits,
+        COALESCE(d.name, d.department_code, 'Unknown') AS department_name,
+        s.semester,
+        s.year,
         i.name AS professor_name,
         i.email AS professor_email,
         -- Aggregate schedule into a JSON array
@@ -50,6 +53,8 @@ export async function GET(
       FROM "public".class c
       JOIN "public".course co ON c.course_id = co.id
       LEFT JOIN "public".instructor i ON c.professor_id = i.id
+      LEFT JOIN "public".department d ON co.department_id = d.id
+      LEFT JOIN "public".semester s ON c.semester_id = s.id
       WHERE c.id = $1;
     `;
 
