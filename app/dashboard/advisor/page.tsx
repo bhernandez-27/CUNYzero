@@ -309,6 +309,12 @@ function AdvisorView({ profile }: { profile: AdvisorProfileDTO }) {
               rows={2}
               placeholder={messages.length === 0 ? "Generate your advisory first…" : "Ask a follow-up question…"}
               disabled={pending || initializing || messages.length === 0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
               className="flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25 focus:border-[#F07E62]/50 disabled:opacity-50"
             />
             <button
