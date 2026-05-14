@@ -448,7 +448,7 @@ def get_student_status(student_id: Optional[str] = None, db: Session = Depends(g
         "suspended": suspended or warning_count >= 3,
     }
 
-@app.get("/submit-review")
+@app.post("/submit-review")
 def submit_review(review: ReviewCreate, db: Session = Depends(get_db)):
     taboo_query = text("SELECT word FROM taboo_word")
     taboo_list = [row[0] for row in db.execute(taboo_query).fetchall()]
@@ -462,6 +462,21 @@ def submit_review(review: ReviewCreate, db: Session = Depends(get_db)):
         )
         db.commit()
         return {"status": "Rejected", "message": "Review blocked. 2 warnings issued."}
+
+    # Save the review (with taboo words masked) to the database
+    db.execute(
+        text("""
+            INSERT INTO "public".review (student_id, class_id, stars, text_content)
+            VALUES (:sid, :cid, :stars, :text)
+        """),
+        {
+            "sid": review.student_id,
+            "cid": review.class_id,
+            "stars": review.stars,
+            "text": final_text,
+        }
+    )
+    db.commit()
 
     return {"status": "Success", "final_text": final_text, "warnings": warnings_to_add}
 
@@ -1734,7 +1749,7 @@ def create_class(data: dict, db: Session = Depends(get_db)):
 
     # Find or create course
     course = db.execute(
-        text("SELECT id FROM course WHERE LOWER(course_code) = LOWER(:code) LIMIT 1"),
+        text("SELECT id FROM course WHERE course_code::text = :code LIMIT 1"),
         {"code": course_code}
     ).fetchone()
     if course:
@@ -1743,9 +1758,13 @@ def create_class(data: dict, db: Session = Depends(get_db)):
         # Get first department as fallback
         dept = db.execute(text("SELECT id FROM department LIMIT 1")).fetchone()
         dept_id = dept[0] if dept else 1
+        # course_code column is integer — extract digits or generate one
+        import re as _re
+        digits = _re.sub(r"\D", "", course_code)
+        code_int = int(digits) if digits else (abs(hash(course_code)) % 9000 + 1000)
         result = db.execute(
-            text("INSERT INTO course (name, course_code, department_id, credits, contact_hours) VALUES (:n, :c, :d, 3, 3) RETURNING id"),
-            {"n": course_name, "c": course_code, "d": dept_id}
+            text("INSERT INTO course (name, course_code, department_id, credits, contact_hours, description) VALUES (:n, :c, :d, 3, 3, :desc) RETURNING id"),
+            {"n": course_name, "c": code_int, "d": dept_id, "desc": course_name}
         )
         course_id = result.fetchone()[0]
 
@@ -1754,14 +1773,18 @@ def create_class(data: dict, db: Session = Depends(get_db)):
     sem_id = sem[0] if sem else 1
 
     # Insert class
+    # Get department_id from the course
+    dept_row = db.execute(text("SELECT department_id FROM course WHERE id = :cid"), {"cid": course_id}).fetchone()
+    class_dept_id = dept_row[0] if dept_row else 1
+
     ins_row = db.execute(
         text("""
             INSERT INTO class (course_id, professor_id, max_num_students, num_students_enrolled,
-                               waitlist_max, current_num_on_waitlist, semester_id)
-            VALUES (:cid, :pid, :max, 0, 5, 0, :sid)
+                               waitlist_max, current_num_on_waitlist, semester_id, department_id)
+            VALUES (:cid, :pid, :max, 0, 5, 0, :sid, :did)
             RETURNING id
         """),
-        {"cid": course_id, "pid": int(instructor_id), "max": capacity, "sid": sem_id}
+        {"cid": course_id, "pid": int(instructor_id), "max": capacity, "sid": sem_id, "did": class_dept_id}
     )
     new_class_id = ins_row.fetchone()[0]
 
@@ -1771,8 +1794,8 @@ def create_class(data: dict, db: Session = Depends(get_db)):
     for slot in time_slots:
         day_upper = day_map.get(slot.get("day","Mon"), "MONDAY")
         db.execute(
-            text("INSERT INTO class_day_met (class_id, day, start_time, end_time) VALUES (:cid, :d, :s, :e)"),
-            {"cid": new_class_id, "d": day_upper, "s": slot.get("start","09:00"), "e": slot.get("end","10:30")}
+            text("INSERT INTO class_day_met (class_id, day, start_time, end_time, location) VALUES (:cid, :d, :s, :e, :loc)"),
+            {"cid": new_class_id, "d": day_upper, "s": slot.get("start","09:00"), "e": slot.get("end","10:30"), "loc": slot.get("location", "TBD")}
         )
 
     db.commit()

@@ -538,11 +538,9 @@ export async function POST(req: Request) {
     contextUsed = retrieved.length;
   } catch (err: unknown) {
     const detail = err instanceof Error ? err.message : String(err);
-    console.error("[chat/route] RAG error:", detail);
-    return new Response(JSON.stringify({ error: "rag_error", detail }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    console.warn("[chat/route] RAG unavailable, falling back to no context:", detail);
+    prompt = buildPrompt(safeRole, message, []);
+    contextUsed = 0;
   }
 
   // 2. Open Gemini streaming connection
