@@ -12,46 +12,56 @@ function getGeminiApiKey(): string | null {
 }
 
 function getGeminiModel(): string {
-  return (process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash").replace(/^models\//, "");
+  return (process.env.GEMINI_MODEL?.trim() || "gemini-3.1-flash-lite").replace(/^models\//, "");
 }
 
+/**
+ * Schema-aligned profile context builder
+ * Uses ONLY fields that are actually supported by your DB model:
+ * - student.gpa
+ * - enrollment data (via API DTO)
+ * - warning table
+ * - honor roll table (derived in API layer)
+ */
 function buildProfileContext(profile: AdvisorProfileDTO): string {
-  const gpa = profile.cumulative_gpa != null ? profile.cumulative_gpa.toFixed(2) : "N/A";
-  const lastSem = [...profile.semesters].find((s) => s.semester_gpa != null);
-  const lastGpa = lastSem?.semester_gpa?.toFixed(2) ?? "N/A";
-  const remaining = Math.max(0, 8 - profile.courses_completed);
+  const gpa = profile.cumulative_gpa ?? profile.student_gpa ?? null;
 
-  const riskLevel =
-    profile.cumulative_gpa != null && profile.cumulative_gpa < 2.0
-      ? "CRITICAL — GPA below 2.0, faces academic termination"
-      : profile.cumulative_gpa != null && profile.cumulative_gpa < 2.25
-        ? "WARNING — GPA between 2.0–2.25, mandatory Registrar interview required"
-        : profile.honor_roll
-          ? "Excellent — Honor Roll student"
-          : "Good Standing";
+  const gpaDisplay = gpa != null ? gpa.toFixed(2) : "N/A";
+
+  const warningCount = profile.warning_count ?? 0;
+
+  const honorRoll = profile.honor_roll === true;
 
   const currentCourses =
-    profile.current_enrollments.length > 0
-      ? profile.current_enrollments.map((c) => `${c.course_name} (${c.section_id})`).join(", ")
-      : "None currently enrolled";
+    profile.current_enrollments?.length > 0
+      ? profile.current_enrollments
+          .map((c) => `${c.course_name} (section ${c.section_id})`)
+          .join(", ")
+      : "None";
 
-  const semHistory = profile.semesters
-    .filter((s) => s.semester_gpa != null)
-    .map((s) => `${s.semester} ${s.year}: ${s.semester_gpa!.toFixed(2)}`)
-    .join(", ");
+  // DO NOT assume graduation requirement (not in schema)
+  const creditsCompletedGuess =
+    profile.current_enrollments?.reduce((sum, c) => sum + (c.credits ?? 0), 0) ?? 0;
+
+  const riskLevel =
+    gpa != null && gpa < 2.0
+      ? "CRITICAL (GPA < 2.0)"
+      : gpa != null && gpa < 2.25
+        ? "WARNING (2.0–2.25)"
+        : honorRoll
+          ? "GOOD STANDING (Honor Roll)"
+          : "GOOD STANDING";
 
   return [
-    "=== Student Academic Profile ===",
-    `Cumulative GPA: ${gpa} / 4.0`,
-    `Last Semester GPA: ${lastGpa}`,
-    `GPA History: ${semHistory || "No completed semesters yet"}`,
-    `Courses Completed: ${profile.courses_completed} / 8 required`,
-    `Courses Remaining for Graduation: ${remaining}`,
-    `Active Warnings: ${profile.warning_count} (3 = suspension)`,
-    `Honor Roll: ${profile.honor_roll ? "Yes" : "No"}`,
-    `Academic Risk: ${riskLevel}`,
+    "=== Student Academic Profile (DB-aligned) ===",
+    `Student GPA (student.gpa / computed): ${gpaDisplay}`,
+    `Active Warnings: ${warningCount}`,
+    `Honor Roll: ${honorRoll ? "Yes" : "No"}`,
     `Current Enrollments: ${currentCourses}`,
-    "================================",
+    `Approx. Current Credits: ${creditsCompletedGuess}`,
+    `Academic Status: ${riskLevel}`,
+    "NOTE: Semester history is not guaranteed to be schema-backed in this API layer.",
+    "============================================",
   ].join("\n");
 }
 
@@ -59,7 +69,7 @@ export async function POST(req: Request) {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
     return NextResponse.json(
-      { error: "gemini_key_missing", message: "Set GEMINI_API_KEY in .env.local." },
+      { error: "gemini_key_missing" },
       { status: 503 },
     );
   }
@@ -68,62 +78,66 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "invalid_json", message: "Request body must be JSON." }, { status: 400 });
-  }
-
-  if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "invalid_body", message: "Expected a JSON object." }, { status: 400 });
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
   const { message, profile } = body as Record<string, unknown>;
+
   if (typeof message !== "string" || !message.trim()) {
     return NextResponse.json(
-      { error: "validation_error", message: "message must be a non-empty string." },
+      { error: "invalid_message" },
       { status: 400 },
     );
   }
 
   const profileContext = profile
     ? buildProfileContext(profile as AdvisorProfileDTO)
-    : "No profile data available.";
+    : "No profile available.";
 
   const prompt = [
-    "You are College0's AI Academic Advisor. You provide personalized academic guidance based on each student's actual academic record.",
-    "Be specific — always reference the student's real GPA, warning count, and course progress from the profile below.",
-    "Do not give generic advice. Every recommendation must be grounded in this student's data.",
+    "You are an AI Academic Advisor for a university system.",
+    "You MUST base advice strictly on the provided student database profile.",
+    "Do NOT assume missing data like graduation requirements or full transcript history.",
     "",
     profileContext,
     "",
-    "Guidelines:",
-    "- If cumulative GPA < 2.0: urgently warn about academic termination risk.",
-    "- If GPA between 2.0–2.25: remind about mandatory Registrar interview.",
-    "- If courses_completed >= 6: mention graduation is within reach and advise on remaining requirements.",
-    "- If honor_roll is true: acknowledge the achievement and encourage maintaining it.",
-    "- Keep responses focused, practical, and under 300 words.",
+    "Rules:",
+    "- If GPA < 2.0: warn about academic risk.",
+    "- If GPA 2.0–2.25: mention probation risk.",
+    "- If honor_roll: acknowledge achievement.",
+    "- Be precise, no generic advice.",
+    "- Keep response under 300 words.",
     "",
     `Student question: ${message.trim()}`,
   ].join("\n");
 
   const model = getGeminiModel();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   let upstream: Response;
+
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 25_000);
+
     upstream = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 600 },
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 600,
+        },
       }),
       signal: controller.signal,
     });
+
     clearTimeout(t);
   } catch {
     return NextResponse.json(
-      { error: "gemini_unreachable", message: "Could not reach the AI service. Try again." },
+      { error: "gemini_unreachable" },
       { status: 502 },
     );
   }
@@ -131,33 +145,28 @@ export async function POST(req: Request) {
   if (!upstream.ok) {
     const text = await upstream.text().catch(() => "");
     return NextResponse.json(
-      { error: "gemini_error", message: "AI service returned an error.", details: text.slice(0, 2000) },
+      { error: "gemini_error", details: text.slice(0, 2000) },
       { status: 502 },
     );
   }
 
-  let data: unknown;
-  try {
-    data = await upstream.json();
-  } catch {
-    return NextResponse.json(
-      { error: "gemini_bad_response", message: "AI response was not valid JSON." },
-      { status: 502 },
-    );
-  }
+  const data = (await upstream.json()) as GeminiResponse;
 
-  const d = data as GeminiResponse;
-  const reply = (d.candidates?.[0]?.content?.parts ?? [])
+  const reply = (data.candidates?.[0]?.content?.parts ?? [])
     .map((p) => (typeof p.text === "string" ? p.text : ""))
     .join("")
     .trim();
 
   if (!reply) {
     return NextResponse.json(
-      { error: "gemini_empty", message: "AI returned an empty response." },
+      { error: "gemini_empty" },
       { status: 502 },
     );
   }
 
-  return NextResponse.json({ reply, usedLlmFallback: true, groundedInVectorDb: false });
+  return NextResponse.json({
+    reply,
+    usedLlmFallback: true,
+    groundedInVectorDb: false,
+  });
 }

@@ -917,60 +917,88 @@ def get_sections(student_id: Optional[str] = None, db: Session = Depends(get_db)
 @app.get("/advisor/profile")
 def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(get_db)):
     try:
+        # Default to 1 if no ID provided, cast to int
         sid = int(student_id) if student_id else 1
     except (ValueError, TypeError):
         sid = 1
 
+    # 1. Fetch Student Basic Info & Major
+    student_info = db.execute(text("""
+        SELECT s.name, s.email, m.name as major_name, d.name as dept_name
+        FROM student s
+        LEFT JOIN major m ON s.major_id = m.id
+        LEFT JOIN department d ON m.department_id = d.id
+        WHERE s.id = :sid
+    """), {"sid": sid}).fetchone()
+
+    if not student_info:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # 2. Fetch All Enrollment History (excluding dropped)
+    # Added JOIN to department to ensure department_name is available for the UI
     rows = db.execute(text("""
-        SELECT co.course_code, co.name AS course_name, e.number_grade, co.credits,
-               cl.id AS section_id, i.name AS instructor
+        SELECT co.course_code, 
+               co.name AS course_name, 
+               e.number_grade, 
+               co.credits,
+               cl.id AS section_id, 
+               i.name AS instructor,
+               d.name AS department_name
         FROM enrollment e
         JOIN class cl ON e.class_id = cl.id
         JOIN course co ON cl.course_id = co.id
+        JOIN department d ON co.department_id = d.id
         LEFT JOIN instructor i ON cl.professor_id = i.id
         WHERE e.student_id = :sid AND e.status != 'DROPPED'
     """), {"sid": sid}).fetchall()
 
     def pct_to_letter(val):
-        if val is None: return None
-        if val >= 90: return "A"
-        if val >= 80: return "B"
-        if val >= 70: return "C"
-        if val >= 60: return "D"
+        if val is None: return "Pending"
+        v = float(val)
+        if v >= 90: return "A"
+        if v >= 80: return "B"
+        if v >= 70: return "C"
+        if v >= 60: return "D"
         return "F"
 
     def pct_to_points(val):
         if val is None: return None
-        if val >= 90: return 4.0
-        if val >= 80: return 3.0
-        if val >= 70: return 2.0
-        if val >= 60: return 1.0
+        v = float(val)
+        if v >= 90: return 4.0
+        if v >= 80: return 3.0
+        if v >= 70: return 2.0
+        if v >= 60: return 1.0
         return 0.0
 
     courses = []
     total_points = 0
     total_credits = 0
+    
     for r in rows:
         m = r._mapping
         num = float(m["number_grade"]) if m["number_grade"] is not None else None
         grade_pts = pct_to_points(num)
         credits = m["credits"]
+        
         courses.append({
             "course_code": str(m["course_code"]),
             "course_name": m["course_name"],
+            "department_name": m["department_name"], # Required for UI substring() call
             "section_id": str(m["section_id"]).zfill(2),
             "credits": credits,
             "grade": pct_to_letter(num),
             "grade_points": grade_pts,
             "instructor": m["instructor"] or "Staff",
         })
+        
         if grade_pts is not None:
             total_points += grade_pts * credits
             total_credits += credits
 
-    gpa = round(total_points / total_credits, 2) if total_credits > 0 else None
-    courses_completed = len([c for c in courses if c["grade"] is not None])
+    # Calculate GPA
+    cumulative_gpa = round(total_points / total_credits, 2) if total_credits > 0 else 0.0
 
+    # 3. Fetch Current Active Enrollments
     current_rows = db.execute(text("""
         SELECT co.name AS course_name, cl.id AS section_id,
                i.name AS instructor, co.credits
@@ -991,6 +1019,7 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
         for r in current_rows
     ]
 
+    # 4. Check for active warnings
     warning_count = db.execute(
         text("SELECT COUNT(*) FROM warning WHERE user_id = :sid AND cleared = false"),
         {"sid": sid}
@@ -998,16 +1027,18 @@ def get_advisor_profile(student_id: Optional[str] = None, db: Session = Depends(
 
     return {
         "student_id": str(sid),
-        "cumulative_gpa": gpa,
+        "student_name": student_info._mapping["name"],
+        "major": student_info._mapping["major_name"] or "Undeclared",
+        "cumulative_gpa": cumulative_gpa,
         "warning_count": int(warning_count),
-        "honor_roll": gpa is not None and gpa >= 3.5,
-        "courses_completed": courses_completed,
+        "honor_roll": cumulative_gpa >= 3.5,
+        "courses_completed": len([c for c in courses if c["grade_points"] is not None]),
         "current_enrollments": current_enrollments,
         "semesters": [
             {
                 "semester": "Spring",
                 "year": 2026,
-                "semester_gpa": gpa,
+                "semester_gpa": cumulative_gpa, # In a multi-semester app, this would be filtered
                 "courses": courses,
             }
         ],
