@@ -29,14 +29,11 @@ function getGeminiApiKey(): string {
 }
 
 function getGeminiModel(): string {
-  return (process.env.GEMINI_MODEL?.trim() || "gemini-3-flash-preview").replace(
-    /^models\//,
-    ""
-  );
+  return (process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash").replace(/^models\//, "");
 }
 
 const EMBEDDING_MODEL = "gemini-embedding-2";
-const TOP_K = 8; // more sources now, so fetch more candidates
+const TOP_K = 10;
 
 // ==============================
 // EMBEDDINGS
@@ -62,30 +59,39 @@ async function embedText(text: string): Promise<number[]> {
 }
 
 // ==============================
-// VECTOR SEARCH — role-gated, full schema
+// VECTOR SEARCH — role-gated
 //
-// VISITOR:  public-safe tables only
-//           course, department, major, semester, class (no student/grades/complaints)
+// Per spec section 1 / GUI requirement:
+//   "highest rated classes, lowest rated classes, and students with highest GPA
+//    are available to ALL users" — so visitors get ratings and student GPAs.
 //
-// STUDENT:  all of the above + their own enrollment/grade context
-//           course, class, department, major, semester,
-//           enrollment, review, major_required_course, class_day_met
+// Per spec section 5:
+//   "no one else except the registrars knows who rated which class"
+//   — reviews are shown anonymously (no student name attached).
 //
-// INSTRUCTOR: everything students see + roster/complaint/warning context
-//           all student tables + student, complaint, warning,
-//           instructor_suspension (their own), review
+// Per spec section 9:
+//   "visitors can ask general questions about classes and requirements"
+//   — also includes who teaches what (public info).
+//
+// VISITOR:  course, department, major, semester,
+//           class (with instructor name + avg rating),
+//           class_day_met (schedule), anonymous reviews,
+//           student name+GPA (public leaderboard per GUI spec)
+//
+// STUDENT:  all visitor data + enrollment, major_required_course
+//           (no other students' private data)
+//
+// INSTRUCTOR: everything + full roster, complaints, warnings, suspensions
 // ==============================
-async function vectorSearch(
-  role: ChatRole,
-  embedding: number[]
-): Promise<ContextRow[]> {
+async function vectorSearch(role: ChatRole, embedding: number[]): Promise<ContextRow[]> {
   const pgVec = `[${embedding.join(",")}]`;
 
-  // ── VISITOR ────────────────────────────────────────────────────────────────
+  // ── VISITOR ──────────────────────────────────────────────────────────────
   if (role === "visitor") {
     const { rows } = await db.query<ContextRow>(
       `SELECT source, label, detail, distance FROM (
 
+        -- Course catalogue
         SELECT 'course' AS source,
                name AS label,
                description AS detail,
@@ -94,6 +100,7 @@ async function vectorSearch(
 
         UNION ALL
 
+        -- Departments
         SELECT 'department' AS source,
                name AS label,
                department_code AS detail,
@@ -102,6 +109,7 @@ async function vectorSearch(
 
         UNION ALL
 
+        -- Majors & requirements (public academic info)
         SELECT 'major' AS source,
                name AS label,
                NULL AS detail,
@@ -110,6 +118,7 @@ async function vectorSearch(
 
         UNION ALL
 
+        -- Semesters
         SELECT 'semester' AS source,
                CONCAT(semester, ' ', year) AS label,
                NULL AS detail,
@@ -118,12 +127,76 @@ async function vectorSearch(
 
         UNION ALL
 
+        -- Classes: who teaches what + avg star rating (both public per spec)
         SELECT 'class' AS source,
                c.name AS label,
-               cl.description AS detail,
+               CONCAT(
+                 COALESCE('Taught by: ' || i.name, 'Instructor TBD'),
+                 ' | Avg rating: ',
+                 COALESCE(ROUND(AVG(r.stars)::numeric, 1)::text || '/5', 'no ratings yet'),
+                 CASE WHEN cl.description IS NOT NULL
+                      THEN ' | ' || cl.description
+                      ELSE '' END
+               ) AS detail,
                cl.embedding <-> $1::vector AS distance
         FROM class cl
         JOIN course c ON c.id = cl.course_id
+        LEFT JOIN instructor i ON i.id = cl.professor_id
+        LEFT JOIN review r ON r.class_id = cl.id
+        GROUP BY cl.id, c.name, i.name, cl.description, cl.embedding
+
+        UNION ALL
+
+        -- Instructors (name + department — public directory info)
+        SELECT 'instructor' AS source,
+               i.name AS label,
+               CONCAT('Department: ', d.name) AS detail,
+               i.embedding <-> $1::vector AS distance
+        FROM instructor i
+        JOIN department d ON d.id = i.department_id
+
+        UNION ALL
+
+        -- Class schedules (public)
+        SELECT 'class_schedule' AS source,
+               CONCAT(c.name, ' — ', cdm.day) AS label,
+               CONCAT(cdm.start_time, ' to ', cdm.end_time, ' @ ', cdm.location) AS detail,
+               cdm.embedding <-> $1::vector AS distance
+        FROM class_day_met cdm
+        JOIN class cl ON cl.id = cdm.class_id
+        JOIN course c ON c.id = cl.course_id
+
+        UNION ALL
+
+        -- Anonymous reviews (spec §5: reviewer identity hidden from everyone except registrar)
+        SELECT 'class_review' AS source,
+               CONCAT(c.name, ' — student review') AS label,
+               CONCAT(r.stars, '/5 stars: ', LEFT(r.text_content, 200)) AS detail,
+               r.embedding <-> $1::vector AS distance
+        FROM review r
+        JOIN class cl ON cl.id = r.class_id
+        JOIN course c ON c.id = cl.course_id
+
+        UNION ALL
+
+        -- Students: name + GPA only (public leaderboard shown to all users per GUI spec §1)
+        SELECT 'student' AS source,
+               s.name AS label,
+               CONCAT('GPA: ', s.gpa) AS detail,
+               s.embedding <-> $1::vector AS distance
+        FROM student s
+        WHERE s.gpa IS NOT NULL
+
+        UNION ALL
+
+        -- Major required courses (public academic requirements)
+        SELECT 'major_requirement' AS source,
+               CONCAT(m.name, ' requires ', co.name) AS label,
+               CONCAT('Minimum grade: ', mrc.minimum_grade) AS detail,
+               mrc.embedding <-> $1::vector AS distance
+        FROM major_required_course mrc
+        JOIN major m ON m.id = mrc.major_id
+        JOIN course co ON co.id = mrc.course_id
 
       ) t
       ORDER BY distance
@@ -133,7 +206,7 @@ async function vectorSearch(
     return rows;
   }
 
-  // ── STUDENT ────────────────────────────────────────────────────────────────
+  // ── STUDENT ───────────────────────────────────────────────────────────────
   if (role === "student") {
     const { rows } = await db.query<ContextRow>(
       `SELECT source, label, detail, distance FROM (
@@ -148,10 +221,18 @@ async function vectorSearch(
 
         SELECT 'class' AS source,
                c.name AS label,
-               cl.description AS detail,
+               CONCAT(
+                 COALESCE('Taught by: ' || i.name, 'Instructor TBD'),
+                 ' | Avg rating: ',
+                 COALESCE(ROUND(AVG(r.stars)::numeric, 1)::text || '/5', 'no ratings yet'),
+                 CASE WHEN cl.description IS NOT NULL THEN ' | ' || cl.description ELSE '' END
+               ) AS detail,
                cl.embedding <-> $1::vector AS distance
         FROM class cl
         JOIN course c ON c.id = cl.course_id
+        LEFT JOIN instructor i ON i.id = cl.professor_id
+        LEFT JOIN review r ON r.class_id = cl.id
+        GROUP BY cl.id, c.name, i.name, cl.description, cl.embedding
 
         UNION ALL
 
@@ -181,9 +262,9 @@ async function vectorSearch(
 
         SELECT 'enrollment' AS source,
                CONCAT(s.name, ' in ', c.name) AS label,
-               CONCAT('status: ', e.status,
+               CONCAT('Status: ', e.status,
                       CASE WHEN e.letter_grade IS NOT NULL
-                           THEN CONCAT(', grade: ', e.letter_grade) ELSE '' END) AS detail,
+                           THEN ', grade: ' || e.letter_grade ELSE '' END) AS detail,
                e.embedding <-> $1::vector AS distance
         FROM enrollment e
         JOIN student s ON s.id = e.student_id
@@ -193,8 +274,8 @@ async function vectorSearch(
         UNION ALL
 
         SELECT 'class_schedule' AS source,
-               CONCAT(c.name, ' on ', cdm.day) AS label,
-               CONCAT(cdm.start_time, ' - ', cdm.end_time, ' @ ', cdm.location) AS detail,
+               CONCAT(c.name, ' — ', cdm.day) AS label,
+               CONCAT(cdm.start_time, ' to ', cdm.end_time, ' @ ', cdm.location) AS detail,
                cdm.embedding <-> $1::vector AS distance
         FROM class_day_met cdm
         JOIN class cl ON cl.id = cdm.class_id
@@ -204,7 +285,7 @@ async function vectorSearch(
 
         SELECT 'major_requirement' AS source,
                CONCAT(m.name, ' requires ', co.name) AS label,
-               CONCAT('minimum grade: ', mrc.minimum_grade) AS detail,
+               CONCAT('Minimum grade: ', mrc.minimum_grade) AS detail,
                mrc.embedding <-> $1::vector AS distance
         FROM major_required_course mrc
         JOIN major m ON m.id = mrc.major_id
@@ -212,13 +293,22 @@ async function vectorSearch(
 
         UNION ALL
 
-        SELECT 'review' AS source,
-               CONCAT(c.name, ' review') AS label,
-               CONCAT(r.stars, '/5 stars — ', LEFT(r.text_content, 200)) AS detail,
+        SELECT 'class_review' AS source,
+               CONCAT(c.name, ' — student review') AS label,
+               CONCAT(r.stars, '/5 stars: ', LEFT(r.text_content, 200)) AS detail,
                r.embedding <-> $1::vector AS distance
         FROM review r
         JOIN class cl ON cl.id = r.class_id
         JOIN course c ON c.id = cl.course_id
+
+        UNION ALL
+
+        SELECT 'student' AS source,
+               s.name AS label,
+               CONCAT('GPA: ', s.gpa) AS detail,
+               s.embedding <-> $1::vector AS distance
+        FROM student s
+        WHERE s.gpa IS NOT NULL
 
       ) t
       ORDER BY distance
@@ -228,7 +318,7 @@ async function vectorSearch(
     return rows;
   }
 
-  // ── INSTRUCTOR ─────────────────────────────────────────────────────────────
+  // ── INSTRUCTOR ────────────────────────────────────────────────────────────
   const { rows } = await db.query<ContextRow>(
     `SELECT source, label, detail, distance FROM (
 
@@ -242,10 +332,18 @@ async function vectorSearch(
 
       SELECT 'class' AS source,
              c.name AS label,
-             cl.description AS detail,
+             CONCAT(
+               COALESCE('Taught by: ' || i.name, 'Instructor TBD'),
+               ' | Avg rating: ',
+               COALESCE(ROUND(AVG(r.stars)::numeric, 1)::text || '/5', 'no ratings yet'),
+               CASE WHEN cl.description IS NOT NULL THEN ' | ' || cl.description ELSE '' END
+             ) AS detail,
              cl.embedding <-> $1::vector AS distance
       FROM class cl
       JOIN course c ON c.id = cl.course_id
+      LEFT JOIN instructor i ON i.id = cl.professor_id
+      LEFT JOIN review r ON r.class_id = cl.id
+      GROUP BY cl.id, c.name, i.name, cl.description, cl.embedding
 
       UNION ALL
 
@@ -275,7 +373,7 @@ async function vectorSearch(
 
       SELECT 'student' AS source,
              s.name AS label,
-             CONCAT('email: ', s.email, ', gpa: ', s.gpa) AS detail,
+             CONCAT('Email: ', s.email, ' | GPA: ', s.gpa) AS detail,
              s.embedding <-> $1::vector AS distance
       FROM student s
 
@@ -283,9 +381,9 @@ async function vectorSearch(
 
       SELECT 'enrollment' AS source,
              CONCAT(s.name, ' in ', c.name) AS label,
-             CONCAT('status: ', e.status,
+             CONCAT('Status: ', e.status,
                     CASE WHEN e.letter_grade IS NOT NULL
-                         THEN CONCAT(', grade: ', e.letter_grade) ELSE '' END) AS detail,
+                         THEN ', grade: ' || e.letter_grade ELSE '' END) AS detail,
              e.embedding <-> $1::vector AS distance
       FROM enrollment e
       JOIN student s ON s.id = e.student_id
@@ -295,8 +393,8 @@ async function vectorSearch(
       UNION ALL
 
       SELECT 'class_schedule' AS source,
-             CONCAT(c.name, ' on ', cdm.day) AS label,
-             CONCAT(cdm.start_time, ' - ', cdm.end_time, ' @ ', cdm.location) AS detail,
+             CONCAT(c.name, ' — ', cdm.day) AS label,
+             CONCAT(cdm.start_time, ' to ', cdm.end_time, ' @ ', cdm.location) AS detail,
              cdm.embedding <-> $1::vector AS distance
       FROM class_day_met cdm
       JOIN class cl ON cl.id = cdm.class_id
@@ -306,7 +404,7 @@ async function vectorSearch(
 
       SELECT 'major_requirement' AS source,
              CONCAT(m.name, ' requires ', co.name) AS label,
-             CONCAT('minimum grade: ', mrc.minimum_grade) AS detail,
+             CONCAT('Minimum grade: ', mrc.minimum_grade) AS detail,
              mrc.embedding <-> $1::vector AS distance
       FROM major_required_course mrc
       JOIN major m ON m.id = mrc.major_id
@@ -314,9 +412,11 @@ async function vectorSearch(
 
       UNION ALL
 
-      SELECT 'review' AS source,
-             CONCAT(c.name, ' review') AS label,
-             CONCAT(r.stars, '/5 stars — ', LEFT(r.text_content, 200)) AS detail,
+      -- Instructors can see who wrote which review (registrar-level not needed here,
+      -- but instructors can see reviews for their own classes)
+      SELECT 'class_review' AS source,
+             CONCAT(c.name, ' — review') AS label,
+             CONCAT(r.stars, '/5 stars: ', LEFT(r.text_content, 200)) AS detail,
              r.embedding <-> $1::vector AS distance
       FROM review r
       JOIN class cl ON cl.id = r.class_id
@@ -325,7 +425,7 @@ async function vectorSearch(
       UNION ALL
 
       SELECT 'complaint' AS source,
-             CONCAT('complaint #', comp.id) AS label,
+             CONCAT('Complaint #', comp.id) AS label,
              comp.description AS detail,
              comp.embedding <-> $1::vector AS distance
       FROM complaint comp
@@ -333,7 +433,7 @@ async function vectorSearch(
       UNION ALL
 
       SELECT 'warning' AS source,
-             CONCAT('warning for user #', w.user_id) AS label,
+             CONCAT('Warning for user #', w.user_id) AS label,
              w.description AS detail,
              w.embedding <-> $1::vector AS distance
       FROM warning w
@@ -341,7 +441,7 @@ async function vectorSearch(
       UNION ALL
 
       SELECT 'instructor_suspension' AS source,
-             CONCAT('suspension: ', ins.suspension_semester, ' ', ins.suspension_year) AS label,
+             CONCAT('Suspension: ', ins.suspension_semester, ' ', ins.suspension_year) AS label,
              ins.reason AS detail,
              ins.embedding <-> $1::vector AS distance
       FROM instructor_suspension ins
@@ -362,24 +462,31 @@ function roleRules(role: ChatRole): string {
     case "visitor":
       return [
         "You are in VISITOR mode.",
-        "- Only discuss publicly available academic information.",
-        "- You have access to: courses, departments, majors, semesters, and class listings.",
-        "- Never reveal student records, grades, complaints, or warnings.",
-        "- Politely refuse any sensitive requests.",
+        "You have access to the following public information:",
+        "- Course catalogue and descriptions",
+        "- Departments and majors (including required courses per major)",
+        "- Semesters",
+        "- Classes: who teaches each class, average star ratings, schedules (day/time/location)",
+        "- Instructor names and their departments",
+        "- Anonymous course reviews (you MUST NOT name or imply who wrote a review — reviewer identity is confidential per college policy)",
+        "- Student names and GPAs (public leaderboard shown on the college dashboard)",
+        "You MUST NOT reveal: student emails, passwords, enrollment records, grades, complaints, warnings, or suspensions.",
+        "If asked who wrote a review, refuse — that information is confidential.",
       ].join("\n");
     case "student":
       return [
         "You are in STUDENT mode.",
-        "- You have access to: courses, classes, departments, majors, semesters, enrollments, schedules, major requirements, and course reviews.",
-        "- Never invent grades, class schedules, or enrollment status.",
-        "- Do not reveal other students' personal information.",
+        "You have access to: all public visitor data, plus enrollment records, class schedules, major requirements, and anonymous course reviews.",
+        "Never invent grades, enrollment status, or schedule details.",
+        "Do not reveal other students' private data (emails, grades, warnings).",
+        "Reviewer identities are always anonymous — never associate a review with a specific student.",
       ].join("\n");
     case "instructor":
       return [
         "You are in INSTRUCTOR mode.",
-        "- You have access to: all academic data, student roster, enrollment records, complaints, warnings, and suspensions.",
-        "- Never fabricate roster data, grades, or disciplinary records.",
-        "- Handle student data with discretion.",
+        "You have access to: all academic data, full student roster (name, email, GPA), enrollment records, course reviews, complaints, warnings, and suspensions.",
+        "Never fabricate roster data, grades, or disciplinary records.",
+        "Handle student data with discretion.",
       ].join("\n");
   }
 }
@@ -387,16 +494,10 @@ function roleRules(role: ChatRole): string {
 // ==============================
 // PROMPT BUILDER
 // ==============================
-function buildPrompt(
-  role: ChatRole,
-  message: string,
-  context: ContextRow[]
-): string {
+function buildPrompt(role: ChatRole, message: string, context: ContextRow[]): string {
   const contextBlock =
     context.length > 0
-      ? context
-          .map((r) => `- [${r.source}] ${r.label}${r.detail ? `: ${r.detail}` : ""}`)
-          .join("\n")
+      ? context.map((r) => `- [${r.source}] ${r.label}${r.detail ? `: ${r.detail}` : ""}`).join("\n")
       : "No relevant context found.";
 
   return [
@@ -425,11 +526,7 @@ export async function POST(req: Request) {
 
   const message: string = body.message.trim();
   const safeRole: ChatRole =
-    body.role === "instructor"
-      ? "instructor"
-      : body.role === "visitor"
-      ? "visitor"
-      : "student";
+    body.role === "instructor" ? "instructor" : body.role === "visitor" ? "visitor" : "student";
 
   // 1. Embed + RAG
   let prompt: string;
@@ -511,9 +608,7 @@ export async function POST(req: Request) {
             try { chunk = JSON.parse(json); } catch { continue; }
 
             const token =
-              chunk.candidates?.[0]?.content?.parts
-                ?.map((p) => p.text ?? "")
-                .join("") ?? "";
+              chunk.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
 
             if (token) send({ token });
           }
