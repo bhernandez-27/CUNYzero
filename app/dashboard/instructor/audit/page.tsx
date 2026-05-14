@@ -151,9 +151,10 @@ export default function InstructorAuditPage() {
                           id={`just-${flag.class_id}`}
                           rows={5}
                           value={drafts[flag.class_id] ?? ""}
-                          onChange={(e) =>
-                            setDrafts((prev) => ({ ...prev, [flag.class_id]: e.currentTarget.value }))
-                          }
+                          onChange={(e) => {
+                            const val = e.currentTarget.value;
+                            setDrafts((prev) => ({ ...prev, [flag.class_id]: val }));
+                          }}
                           disabled={isSubmitting}
                           placeholder="Write your justification here…"
                           className="mt-2 w-full rounded-xl border border-black/10 bg-[#F7F5F1]/50 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25 disabled:opacity-60 resize-none"
