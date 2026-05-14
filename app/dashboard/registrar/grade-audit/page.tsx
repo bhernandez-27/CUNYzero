@@ -147,10 +147,21 @@ export default function GradeAuditPage() {
                   </div>
                 )}
 
-                {active.cls.justification_requested && (
+                {active.cls.justification_requested && !active.cls.justification_text && (
                   <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
                     <span className="font-semibold">Justification requested.</span> The instructor has been notified.
-                    Once you have reviewed their response, take a final action below.
+                    Waiting for their response — check back shortly.
+                  </div>
+                )}
+
+                {active.cls.justification_requested && active.cls.justification_text && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 space-y-1.5">
+                    <div className="text-xs font-semibold text-emerald-800">
+                      Instructor&apos;s justification received
+                    </div>
+                    <p className="text-xs text-emerald-900 leading-relaxed whitespace-pre-wrap">
+                      {active.cls.justification_text}
+                    </p>
                   </div>
                 )}
 
@@ -312,9 +323,14 @@ function AuditCard({
                 {flagHigh ? "GPA too high" : "GPA too low"}
               </span>
             )}
-            {cls.justification_requested && !cls.resolved && (
+            {cls.justification_requested && !cls.resolved && !cls.justification_text && (
               <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
-                Justification requested
+                Awaiting response
+              </span>
+            )}
+            {cls.justification_requested && !cls.resolved && cls.justification_text && (
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                Response received
               </span>
             )}
             {cls.resolved && (

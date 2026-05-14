@@ -34,6 +34,7 @@ export type ClassGradeAuditDTO = {
   flagged: boolean;
   flag_reason: "TOO_HIGH" | "TOO_LOW" | null;
   justification_requested: boolean;
+  justification_text: string;
   resolved: boolean;
 };
 

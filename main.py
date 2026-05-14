@@ -859,6 +859,35 @@ def get_student_warnings(student_id: Optional[str] = None, db: Session = Depends
         ]
     }
 
+@app.get("/warnings/instructor")
+def get_instructor_warnings(instructor_id: Optional[str] = None, db: Session = Depends(get_db)):
+    try:
+        iid = int(instructor_id) if instructor_id else None
+    except (ValueError, TypeError):
+        iid = None
+    if not iid:
+        raise HTTPException(status_code=400, detail="instructor_id is required.")
+
+    rows = db.execute(
+        text("SELECT id, description, cleared FROM warning WHERE user_id = :iid ORDER BY id DESC"),
+        {"iid": iid}
+    ).fetchall()
+
+    active_count = sum(1 for r in rows if not r.cleared)
+
+    return {
+        "instructor_id": str(iid),
+        "warning_count": active_count,
+        "warnings": [
+            {
+                "warning_id": str(r.id),
+                "reason": r.description or "No reason provided",
+                "cleared": bool(r.cleared),
+            }
+            for r in rows
+        ],
+    }
+
 @app.post("/complaints")
 def file_complaint(data: ComplaintRequest, db: Session = Depends(get_db)):
     try:

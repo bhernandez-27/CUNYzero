@@ -25,6 +25,37 @@ const MOCK_ROSTERS: Record<string, string[]> = {
   "CLS-002": ["STU-201", "STU-202", "STU-203", "STU-204", "STU-205"],
 };
 
+export async function GET(req: Request) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "UNAUTHORIZED", message: "Not authenticated." }, { status: 401 });
+  }
+
+  const base = getAuthPythonBaseUrl();
+  if (!base) return NextResponse.json({ warning_count: 0, warnings: [] });
+
+  const cookie = req.headers.get("cookie");
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (cookie) headers.Cookie = cookie;
+
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 10_000);
+    const upstream = await fetch(
+      `${base}/warnings/instructor?instructor_id=${encodeURIComponent(session.id)}`,
+      { headers, signal: controller.signal },
+    );
+    clearTimeout(t);
+    const body = await upstream.text();
+    return new NextResponse(body, {
+      status: upstream.status,
+      headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+    });
+  } catch {
+    return NextResponse.json({ warning_count: 0, warnings: [] });
+  }
+}
+
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session) {

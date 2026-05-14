@@ -17,25 +17,41 @@ function fmtSlots(slots: InstructorClassDTO["time_slots"]) {
   return slots.map((s) => `${s.day} ${s.start}–${s.end}`).join(" · ");
 }
 
+type Warning = { warning_id: string; reason: string; cleared: boolean };
+type WarningsResponse = { warning_count: number; warnings: Warning[] };
+
 export default async function InstructorDashboardPage() {
   const session = await getSession();
   if (!session) redirect("/auth");
   if (session.role !== "instructor") redirect("/dashboard");
 
+  const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
+
   let classes: InstructorClassDTO[] = [];
   let loadError: string | null = null;
+  let warningsData: WarningsResponse = { warning_count: 0, warnings: [] };
 
   try {
-    const baseUrl = process.env.MAIN_URL || "http://localhost:3000";
-    const cookieStore = await cookies();
     const res = await fetch(`${baseUrl}/api/instructor/classes`, {
       cache: "no-store",
-      headers: { cookie: cookieStore.toString() },
+      headers: { cookie: cookieHeader },
     });
     if (!res.ok) throw new Error(res.statusText);
     classes = (await res.json()) as InstructorClassDTO[];
   } catch (err) {
     loadError = err instanceof Error ? err.message : "Failed to load classes.";
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/api/instructor/warnings`, {
+      cache: "no-store",
+      headers: { cookie: cookieHeader },
+    });
+    if (res.ok) warningsData = (await res.json()) as WarningsResponse;
+  } catch {
+    // non-critical — dashboard still loads without warning data
   }
 
   const totalEnrolled = classes.reduce((s, c) => s + c.enrolled, 0);
@@ -61,6 +77,30 @@ export default async function InstructorDashboardPage() {
                 </span>
               </div>
             </div>
+
+            {/* Warning banner — shown when registrar has issued a formal warning */}
+            {warningsData.warning_count > 0 && (
+              <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0 text-amber-600">
+                    <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <span className="text-sm font-semibold text-amber-900">
+                    {warningsData.warning_count} formal warning{warningsData.warning_count !== 1 ? "s" : ""} on record
+                  </span>
+                </div>
+                <ul className="space-y-2">
+                  {warningsData.warnings.filter((w) => !w.cleared).map((w) => (
+                    <li key={w.warning_id} className="rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-700">
+                      {w.reason}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-amber-700">
+                  These warnings were issued by the Registrar. Please contact the Registrar if you have questions.
+                </p>
+              </div>
+            )}
 
             {loadError && (
               <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-6 py-5 text-sm text-red-800">
