@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 import { useRole } from "@/lib/auth/RoleContext";
+import type { ComplaintSubject, ComplaintSubjectsDTO } from "@/app/api/complaints/subjects/route";
 
 type SubjectType = "student" | "instructor";
 type FormState = "idle" | "submitting" | "success" | "error";
@@ -20,6 +21,28 @@ export default function ComplaintPage() {
   const [formState, setFormState] = useState<FormState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [complaintId, setComplaintId] = useState<string | null>(null);
+  const [subjects, setSubjects] = useState<ComplaintSubjectsDTO>({ students: [], instructors: [] });
+  const [loadingSubjects, setLoadingSubjects] = useState(true);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/complaints/subjects", { cache: "no-store" });
+        if (res.ok) setSubjects((await res.json()) as ComplaintSubjectsDTO);
+      } finally {
+        setLoadingSubjects(false);
+      }
+    })();
+  }, []);
+
+  // When subject type changes, reset the selected person
+  function handleSubjectTypeChange(t: SubjectType) {
+    setSubjectType(t);
+    setSubjectId("");
+  }
+
+  const optionsForType: ComplaintSubject[] =
+    subjectType === "student" ? subjects.students : subjects.instructors;
 
   const descriptionMin = 10;
   const descriptionMax = 1000;
@@ -92,55 +115,64 @@ export default function ComplaintPage() {
                     Who is this complaint about?
                   </div>
 
-                  {/* Subject type toggle */}
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500 mb-2">Subject type</div>
-                    <div className="flex gap-2">
-                      {allowedTargets.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setSubjectType(t)}
-                          className={[
-                            "flex-1 rounded-xl border px-4 py-2.5 text-sm font-semibold transition capitalize",
-                            subjectType === t
-                              ? "bg-neutral-900 text-white border-neutral-900"
-                              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
-                          ].join(" ")}
-                        >
-                          {t}
-                        </button>
-                      ))}
+                  {/* Subject type toggle — only shown for students (instructors are locked to "student") */}
+                  {allowedTargets.length > 1 && (
+                    <div>
+                      <div className="text-xs font-semibold text-slate-500 mb-2">Subject type</div>
+                      <div className="flex gap-2">
+                        {allowedTargets.map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => handleSubjectTypeChange(t)}
+                            className={[
+                              "flex-1 rounded-xl border px-4 py-2.5 text-sm font-semibold transition capitalize",
+                              subjectType === t
+                                ? "bg-neutral-900 text-white border-neutral-900"
+                                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50",
+                            ].join(" ")}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    {role === "instructor" && (
-                      <p className="mt-2 text-xs text-slate-400">
-                        Instructors may only file complaints against students.
-                      </p>
-                    )}
-                  </div>
+                  )}
+                  {role === "instructor" && (
+                    <p className="text-xs text-slate-400">
+                      Instructors may only file complaints against students.
+                    </p>
+                  )}
 
-                  {/* Subject ID / name */}
+                  {/* Subject dropdown */}
                   <div>
                     <label
                       htmlFor="subject-id"
                       className="block text-xs font-semibold text-slate-500 mb-1.5"
                     >
-                      {subjectType === "student" ? "Student" : "Instructor"} ID or full name
+                      Select {subjectType === "student" ? "student" : "instructor"}
                       <span className="text-red-500 ml-0.5">*</span>
                     </label>
-                    <input
-                      id="subject-id"
-                      type="text"
-                      value={subjectId}
-                      onChange={(e) => setSubjectId(e.currentTarget.value)}
-                      placeholder={
-                        subjectType === "student"
-                          ? "e.g. STU-00123 or Jane Doe"
-                          : "e.g. INS-00045 or Prof. Smith"
-                      }
-                      required
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25 focus:border-[#F07E62]/50 transition"
-                    />
+                    {loadingSubjects ? (
+                      <div className="h-10 rounded-xl bg-slate-100 animate-pulse" />
+                    ) : optionsForType.length === 0 ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-400">
+                        No {subjectType === "student" ? "classmates" : "instructors"} found for your current classes.
+                      </div>
+                    ) : (
+                      <select
+                        id="subject-id"
+                        value={subjectId}
+                        onChange={(e) => { const v = e.currentTarget.value; setSubjectId(v); }}
+                        required
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#F07E62]/25 focus:border-[#F07E62]/50 transition"
+                      >
+                        <option value="">— select a person —</option>
+                        {optionsForType.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 </div>
 

@@ -14,10 +14,11 @@ const CARD_COLORS = [
 
 function numericToLetter(g: number | null): string | null {
   if (g == null) return null;
-  if (g >= 4.0) return "A";
-  if (g >= 3.0) return "B";
-  if (g >= 2.0) return "C";
-  if (g >= 1.0) return "D";
+  // number_grade is stored as 0–100 percentage, not 0–4 GPA points
+  if (g >= 90) return "A";
+  if (g >= 80) return "B";
+  if (g >= 70) return "C";
+  if (g >= 60) return "D";
   return "F";
 }
 

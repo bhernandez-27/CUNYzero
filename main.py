@@ -939,6 +939,78 @@ def file_complaint(data: ComplaintRequest, db: Session = Depends(get_db)):
 
     return JSONResponse({"complaint_id": f"CMP-{complaint_id}", "status": "submitted"}, status_code=201)
 
+@app.get("/complaints/subjects")
+def get_complaint_subjects(user_id: int, role: str, db: Session = Depends(get_db)):
+    """GET /complaints/subjects?user_id=X&role=student|instructor
+    Returns the people this user can file a complaint against:
+      - students: classmates + instructors of their enrolled classes
+      - instructors: students enrolled in their classes
+    """
+    students_out = []
+    instructors_out = []
+
+    if role == "student":
+        # Find all classes this student is enrolled/waitlisted in
+        class_ids = db.execute(
+            text("""
+                SELECT DISTINCT class_id FROM enrollment
+                WHERE student_id = :uid AND status IN ('ENROLLED', 'WAITLISTED')
+            """),
+            {"uid": user_id}
+        ).scalars().all()
+
+        if class_ids:
+            # Other students in the same classes
+            student_rows = db.execute(
+                text("""
+                    SELECT DISTINCT st.id, st.name
+                    FROM student st
+                    JOIN enrollment e ON st.id = e.student_id
+                    WHERE e.class_id = ANY(:cids)
+                      AND e.status IN ('ENROLLED', 'WAITLISTED')
+                      AND st.id != :uid
+                    ORDER BY st.name
+                """),
+                {"cids": list(class_ids), "uid": user_id}
+            ).fetchall()
+            students_out = [{"id": str(r.id), "name": r.name} for r in student_rows]
+
+            # Instructors of those classes
+            instructor_rows = db.execute(
+                text("""
+                    SELECT DISTINCT i.id, i.name
+                    FROM instructor i
+                    JOIN class cl ON i.id = cl.professor_id
+                    WHERE cl.id = ANY(:cids)
+                    ORDER BY i.name
+                """),
+                {"cids": list(class_ids)}
+            ).fetchall()
+            instructors_out = [{"id": str(r.id), "name": r.name} for r in instructor_rows]
+
+    elif role == "instructor":
+        # Find classes this instructor teaches
+        class_ids = db.execute(
+            text("SELECT DISTINCT id FROM class WHERE professor_id = :uid"),
+            {"uid": user_id}
+        ).scalars().all()
+
+        if class_ids:
+            student_rows = db.execute(
+                text("""
+                    SELECT DISTINCT st.id, st.name
+                    FROM student st
+                    JOIN enrollment e ON st.id = e.student_id
+                    WHERE e.class_id = ANY(:cids)
+                      AND e.status IN ('ENROLLED', 'WAITLISTED')
+                    ORDER BY st.name
+                """),
+                {"cids": list(class_ids)}
+            ).fetchall()
+            students_out = [{"id": str(r.id), "name": r.name} for r in student_rows]
+
+    return {"students": students_out, "instructors": instructors_out}
+
 @app.get("/graduation/status")
 def get_graduation_status(student_id: Optional[str] = None, db: Session = Depends(get_db)):
     try:
