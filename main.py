@@ -147,7 +147,7 @@ def create_missing_tables():
         if count == 0:
             db.execute(text(
                 "INSERT INTO semester_state (current_period, semester_name, year, advanced_at) "
-                "VALUES ('REGISTRATION', 'Spring', 2026, NOW())"
+                "VALUES ('CLASS_SETUP', 'Spring', 2026, NOW())"
             ))
         # Reset sequences that seed data may have left out of sync
         for seq_fix in [
