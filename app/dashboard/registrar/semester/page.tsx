@@ -376,7 +376,7 @@ export default function SemesterPage() {
                 )}
 
                 {/* What will happen when you advance */}
-                {pageState === "ready" && nextPeriod && nextInfo && (
+                {(pageState === "ready" || pageState === "advanced") && nextPeriod && nextInfo && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 space-y-3">
                     <div>
                       <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
@@ -447,7 +447,7 @@ export default function SemesterPage() {
                   </div>
                 )}
 
-                {!nextPeriod && pageState === "ready" && (
+                {!nextPeriod && (pageState === "ready" || pageState === "advanced") && (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
                     This is the final period of the semester. Once all grades are submitted and
                     graduation applications are processed, advance to begin the next semester's

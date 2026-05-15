@@ -2388,38 +2388,42 @@ def advance_semester(db: Session = Depends(get_db)):
     if next_state == "GRADING":
         students = db.execute(text("""
             SELECT DISTINCT s.id,
-                COALESCE(SUM(e.number_grade * COALESCE(c.credits, 3)) / 
+                COALESCE(SUM(e.number_grade * COALESCE(c.credits, 3)) /
                         NULLIF(SUM(COALESCE(c.credits, 3)), 0), 0) as gpa
             FROM student s
-            LEFT JOIN enrollment e ON s.id = e.student_id 
+            LEFT JOIN enrollment e ON s.id = e.student_id
               AND e.status = 'COMPLETED' AND e.number_grade IS NOT NULL
             LEFT JOIN class cl ON e.class_id = cl.id
             LEFT JOIN course c ON cl.course_id = c.id
-            WHERE s.status != 'TERMINATED'
+            WHERE NOT EXISTS (
+                SELECT 1 FROM termination t WHERE t.student_id = s.id
+            )
             GROUP BY s.id
         """)).fetchall()
         
         honor_roll_count = 0
+        # semester enum requires uppercase (FALL, SPRING, etc.)
+        sem_enum = sem_name.upper()
         for student in students:
             gpa = float(student.gpa) if student.gpa else 0.0
-            
+
             # Check if qualifies for honor roll (GPA >= 3.5)
             if gpa >= 3.5:
                 already = db.execute(
                     text("""
-                        SELECT 1 FROM student_honor_roll 
-                        WHERE student_id = :sid AND academic_year = :yr AND semester = :sem
+                        SELECT 1 FROM student_honor_roll
+                        WHERE student_id = :sid AND year = :yr AND semester = :sem
                     """),
-                    {"sid": student.id, "yr": yr, "sem": sem_name}
+                    {"sid": student.id, "yr": yr, "sem": sem_enum}
                 ).fetchone()
-                
+
                 if not already:
                     db.execute(
                         text("""
-                            INSERT INTO student_honor_roll (student_id, academic_year, semester)
+                            INSERT INTO student_honor_roll (student_id, year, semester)
                             VALUES (:sid, :yr, :sem)
                         """),
-                        {"sid": student.id, "yr": yr, "sem": sem_name}
+                        {"sid": student.id, "yr": yr, "sem": sem_enum}
                     )
                     honor_roll_count += 1
                     
